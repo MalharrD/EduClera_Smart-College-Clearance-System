@@ -6,29 +6,28 @@ const cors = require('cors');
 const app = express();
 
 const allowedOrigins = [
-  'http://localhost:5173',  
+  'http://localhost:5173',
   'http://localhost:3000',
-  process.env.FRONTEND_URL,
-  'https://educlera.onrender.com/api'
+  'https://educlera.onrender.com', // <--- ADDED YOUR EXACT FRONTEND URL
+  process.env.FRONTEND_URL         // Catches the Env Var if set
 ];
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, curl, or Postman)
+    // Allow requests with no origin (like mobile apps or curl)
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.indexOf(origin) !== -1 || !process.env.NODE_ENV) {
-      // Allow if origin is in the list OR if we are in development mode
+    // Check if origin is in the allowed list
+    if (allowedOrigins.includes(origin) || !process.env.NODE_ENV) {
       return callback(null, true);
     } else {
-      // Block otherwise
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
+      console.log('Blocked by CORS:', origin); // Log blocked origins for debugging
+      return callback(new Error('Not allowed by CORS'));
     }
   },
-  credentials: true, // Important for cookies/sessions if you use them
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Access-Control-Allow-Origin', 'Access-Control-Allow-Credentials', 'X-Access-Token', 'X-Refresh-Token']
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(express.json());
