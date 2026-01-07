@@ -9,7 +9,7 @@ const allowedOrigins = [
   'http://localhost:5173',  
   'http://localhost:3000',
   process.env.FRONTEND_URL,
-  'https://educlera-frontend.vercel.app'
+  'https://educlera.onrender.com/api'
 ];
 
 app.use(cors({
