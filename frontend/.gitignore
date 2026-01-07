@@ -7,14 +7,21 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-output
-*.local
-package-lock.json
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
 
-# Editor directories and files
+# Testing
+coverage
+.nyc_output
+
+# Production Build (Vite)
+dist/
+dist-ssr/
+*.local
+
+# Editor directories
 .vscode/*
 !.vscode/extensions.json
 .idea
@@ -24,6 +31,13 @@ package-lock.json
 *.njsproj
 *.sln
 *.sw?
-.sync
-history/*.json
-.vite_cache
+
+# Environment Variables (Keep these secret!)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# TypeScript
+*.tsbuildinfo

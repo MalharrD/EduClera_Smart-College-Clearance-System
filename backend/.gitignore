@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Environment Variables (CRITICAL for Backend)
+.env
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Optional: if you add file uploads later
+uploads/
