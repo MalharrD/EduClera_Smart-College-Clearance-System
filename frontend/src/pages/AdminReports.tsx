@@ -1,15 +1,20 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { apiService } from '@/services/api'; 
 import { clearanceWorkflow } from '@/services/storage'; 
+import { generateRequestsSummaryPDF } from '@/utils/pdfGenerator';
 import type { ClearanceRequest, Student, ClearanceApproval } from '@/types';
-import { FileText, TrendingUp } from 'lucide-react';
+import { FileText, TrendingUp, Download, Loader2 } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
 export default function AdminReports() {
   const [requests, setRequests] = useState<ClearanceRequest[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [allApprovals, setAllApprovals] = useState<ClearanceApproval[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     loadData();
@@ -18,7 +23,6 @@ export default function AdminReports() {
   const loadData = async () => {
     try {
       // 1. Fetch Requests and Students
-      // FIX: Explicitly cast the API response to the correct types
       const [fetchedRequests, fetchedStudents] = await Promise.all([
         apiService.getAllRequests() as Promise<ClearanceRequest[]>,
         apiService.getAllStudents() as Promise<Student[]>
@@ -29,16 +33,33 @@ export default function AdminReports() {
 
       // 2. Fetch Approvals for all requests
       if (fetchedRequests.length > 0) {
-        // FIX: Now 'req' is correctly inferred as ClearanceRequest, so no error
         const approvalPromises = fetchedRequests.map((req) => apiService.getApprovals(req.id));
         const approvalsResults = await Promise.all(approvalPromises);
         
-        // Flatten the array of arrays and cast it
+        // Flatten the array of arrays
         const flatApprovals = approvalsResults.flat() as ClearanceApproval[];
         setAllApprovals(flatApprovals);
       }
     } catch (error) {
       console.error("Failed to load report data", error);
+    }
+  };
+
+  const handleDownloadReport = async () => {
+    if (requests.length === 0) {
+      toast({ title: "No Data", description: "No requests to generate report.", variant: "destructive" });
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      await generateRequestsSummaryPDF(requests, students);
+      toast({ title: "Success", description: "Report downloaded successfully." });
+    } catch (error) {
+      console.error(error);
+      toast({ title: "Error", description: "Failed to generate PDF.", variant: "destructive" });
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -59,9 +80,19 @@ export default function AdminReports() {
   return (
     <div className="min-h-screen bg-muted/30">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-foreground">System Reports</h1>
-          <p className="text-muted-foreground mt-2">Overview of all clearance requests</p>
+        
+        <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-foreground">System Reports</h1>
+            <p className="text-muted-foreground mt-2">Overview of all clearance requests</p>
+          </div>
+          <Button onClick={handleDownloadReport} disabled={isGenerating}>
+            {isGenerating ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...</>
+            ) : (
+              <><Download className="mr-2 h-4 w-4" /> Download Summary PDF</>
+            )}
+          </Button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-8">

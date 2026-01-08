@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useToast } from '@/hooks/use-toast';
-import { clearanceWorkflow } from '@/services/storage'; // Keep this file for workflow constants
+import { clearanceWorkflow } from '@/services/storage';
 import { apiService } from '@/services/api';
 import { supabase } from '@/lib/supabase';
 import { useSupabaseUpload } from '@/hooks/use-supabase-upload';
@@ -38,6 +38,10 @@ export default function SubmitRequest() {
   const navigate = useNavigate();
   const { toast } = useToast();
 
+  // --- CONFIG: Define Upload Path ---
+  // Organizing by student ID prevents filename collisions between users
+  const uploadPath = student ? `requests/${student.id}` : 'requests/guest';
+
   // --- SUPABASE FILE UPLOAD HOOK ---
   const { 
     files, 
@@ -49,7 +53,8 @@ export default function SubmitRequest() {
     loading: isUploading
   } = useSupabaseUpload({
     supabase,
-    bucketName: 'documents', // Ensure this bucket exists in Supabase Storage
+    bucketName: 'documents',
+    path: uploadPath, // <--- ADDED PATH
     maxFiles: 1,
     allowedMimeTypes: ['application/pdf', 'image/png', 'image/jpeg'],
   });
@@ -65,9 +70,14 @@ export default function SubmitRequest() {
       let uploadedUrl = '';
       if (files.length > 0) {
         await onUpload();
+        
+        // Construct the full path to get the correct URL
+        const filePath = `${uploadPath}/${files[0].name}`;
+        
         const { data } = supabase.storage
           .from('documents')
-          .getPublicUrl(files[0].name);
+          .getPublicUrl(filePath);
+          
         uploadedUrl = data.publicUrl;
       }
 
@@ -79,7 +89,7 @@ export default function SubmitRequest() {
         type: (clearanceType === 'noc_submission' ? 'no_dues' : clearanceType) as ClearanceType,
         status: 'pending',
         submittedAt: new Date().toISOString(),
-        pdfUrl: uploadedUrl,
+        pdfUrl: uploadedUrl, // Save the URL
       };
 
       // 3. Prepare Approval Data
@@ -172,25 +182,25 @@ export default function SubmitRequest() {
                     <Label className="text-base font-semibold">Select Clearance Type</Label>
                     <RadioGroup value={clearanceType} onValueChange={(v) => setClearanceType(v as any)} className="grid gap-4">
                       
-                      <div className="flex items-start space-x-3 p-4 border rounded-lg hover:bg-accent/50 cursor-pointer transition-all">
+                      <div className={`flex items-start space-x-3 p-4 border rounded-lg cursor-pointer transition-all ${clearanceType === 'noc_submission' ? 'bg-primary/5 border-primary ring-1 ring-primary' : 'hover:bg-accent/50'}`}>
                         <RadioGroupItem value="noc_submission" id="noc_submission" className="mt-1" />
-                        <Label htmlFor="noc_submission" className="cursor-pointer">
+                        <Label htmlFor="noc_submission" className="cursor-pointer w-full">
                           <div className="font-semibold text-primary">(NOC-FORM) - For Submission</div>
                           <p className="text-xs text-muted-foreground mt-1">Subject-wise clearance for Manuals & Micro-projects.</p>
                         </Label>
                       </div>
 
-                      <div className="flex items-start space-x-3 p-4 border rounded-lg hover:bg-accent/50 cursor-pointer transition-all">
+                      <div className={`flex items-start space-x-3 p-4 border rounded-lg cursor-pointer transition-all ${clearanceType === 'hall_ticket' ? 'bg-primary/5 border-primary ring-1 ring-primary' : 'hover:bg-accent/50'}`}>
                         <RadioGroupItem value="hall_ticket" id="hall_ticket" className="mt-1" />
-                        <Label htmlFor="hall_ticket" className="cursor-pointer">
+                        <Label htmlFor="hall_ticket" className="cursor-pointer w-full">
                           <div className="font-semibold">Hall Ticket Clearance</div>
                           <p className="text-xs text-muted-foreground mt-1">Standard exam hall ticket approval process.</p>
                         </Label>
                       </div>
 
-                      <div className="flex items-start space-x-3 p-4 border rounded-lg hover:bg-accent/50 cursor-pointer transition-all">
+                      <div className={`flex items-start space-x-3 p-4 border rounded-lg cursor-pointer transition-all ${clearanceType === 'no_dues' ? 'bg-primary/5 border-primary ring-1 ring-primary' : 'hover:bg-accent/50'}`}>
                         <RadioGroupItem value="no_dues" id="no_dues" className="mt-1" />
-                        <Label htmlFor="no_dues" className="cursor-pointer">
+                        <Label htmlFor="no_dues" className="cursor-pointer w-full">
                           <div className="font-semibold">No-Dues Clearance</div>
                           <p className="text-xs text-muted-foreground mt-1">Final institutional clearance for graduation.</p>
                         </Label>
@@ -219,7 +229,9 @@ export default function SubmitRequest() {
                       <div className="mt-4 space-y-2">
                         {files.map((file) => (
                           <div key={file.name} className="flex items-center justify-between p-2 bg-muted rounded border text-sm">
-                            <span className="truncate max-w-[200px]">{file.name}</span>
+                            <span className="truncate max-w-[200px] flex items-center gap-2">
+                               <FileText className="h-4 w-4" /> {file.name}
+                            </span>
                             <Button 
                               type="button" 
                               variant="ghost" 

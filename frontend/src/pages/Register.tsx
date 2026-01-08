@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'; // Added useEffect
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -20,7 +20,7 @@ export default function Register() {
     confirmPassword: '',
     name: '',
     email: '',
-    role: 'student' as UserRole,
+    role: 'student' as UserRole, // Default and fixed to 'student'
     collegeId: '',
     enrollmentNumber: '',
     department: '',
@@ -43,7 +43,6 @@ export default function Register() {
       // Fallback defaults if the Admin hasn't configured anything yet
       const defaults = ["Computer Science", "Information Technology", "Mechanical"];
       setAvailableDepartments(defaults);
-      // Initialize the storage so it stays consistent
       localStorage.setItem('manage_departments', JSON.stringify(defaults));
     }
   }, []);
@@ -78,15 +77,14 @@ export default function Register() {
       return;
     }
 
-    if (formData.role === 'student') {
-      if (!formData.collegeId || !formData.enrollmentNumber || !formData.department) {
-        toast({
-          title: 'Error',
-          description: 'Please fill in all student information including Department',
-          variant: 'destructive',
-        });
-        return;
-      }
+    // Always validate student info since this is now a student-only form
+    if (!formData.collegeId || !formData.enrollmentNumber || !formData.department) {
+      toast({
+        title: 'Error',
+        description: 'Please fill in all student information including Department',
+        variant: 'destructive',
+      });
+      return;
     }
 
     setIsLoading(true);
@@ -97,21 +95,18 @@ export default function Register() {
         password: formData.password,
         name: formData.name,
         email: formData.email,
-        role: formData.role,
+        role: 'student' as UserRole, // Enforce student role
       };
 
-      const studentData =
-        formData.role === 'student'
-          ? {
-              name: formData.name,
-              collegeId: formData.collegeId,
-              enrollmentNumber: formData.enrollmentNumber,
-              department: formData.department,
-              year: Number.parseInt(formData.year),
-              email: formData.email,
-              phone: formData.phone,
-            }
-          : undefined;
+      const studentData = {
+        name: formData.name,
+        collegeId: formData.collegeId,
+        enrollmentNumber: formData.enrollmentNumber,
+        department: formData.department,
+        year: Number.parseInt(formData.year),
+        email: formData.email,
+        phone: formData.phone,
+      };
 
       await register(userData, studentData);
       
@@ -155,8 +150,8 @@ export default function Register() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Create Account</CardTitle>
-            <CardDescription>Register for a new account</CardDescription>
+            <CardTitle>Student Registration</CardTitle>
+            <CardDescription>Create your student account to access clearance services</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -203,32 +198,7 @@ export default function Register() {
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="role">
-                    Role <span className="text-destructive">*</span>
-                  </Label>
-                  <Select
-                    value={formData.role}
-                    onValueChange={(value) => setFormData({ ...formData, role: value as UserRole })}
-                    disabled={isLoading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="student">Student</SelectItem>
-                      <SelectItem value="teacher">Teacher</SelectItem>
-                      <SelectItem value="hod">Head of Department</SelectItem>
-                      <SelectItem value="library">Library</SelectItem>
-                      <SelectItem value="accounts">Accounts</SelectItem>
-                      <SelectItem value="scholarship">Scholarship</SelectItem>
-                      <SelectItem value="student_section">Student Section</SelectItem>
-                      <SelectItem value="hostel_bus">Hostel/Bus</SelectItem>
-                      <SelectItem value="tpo">Training & Placement</SelectItem>
-                      <SelectItem value="exam_cell">Exam Cell</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                {/* ROLE SELECTOR REMOVED - AUTOMATICALLY 'STUDENT' */}
 
                 <div className="space-y-2">
                   <Label htmlFor="password">
@@ -259,97 +229,94 @@ export default function Register() {
                 </div>
               </div>
 
-              {formData.role === 'student' && (
-                <>
-                  <div className="pt-4 border-t border-border">
-                    <h3 className="text-sm font-medium mb-4">Student Information</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="collegeId">
-                          College ID <span className="text-destructive">*</span>
-                        </Label>
-                        <Input
-                          id="collegeId"
-                          type="text"
-                          placeholder="e.g., CS2021001"
-                          value={formData.collegeId}
-                          onChange={(e) => setFormData({ ...formData, collegeId: e.target.value })}
-                          disabled={isLoading}
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="enrollmentNumber">
-                          Enrollment Number <span className="text-destructive">*</span>
-                        </Label>
-                        <Input
-                          id="enrollmentNumber"
-                          type="text"
-                          placeholder="e.g., EN2021001"
-                          value={formData.enrollmentNumber}
-                          onChange={(e) =>
-                            setFormData({ ...formData, enrollmentNumber: e.target.value })
-                          }
-                          disabled={isLoading}
-                        />
-                      </div>
-
-                      {/* --- SYNCHRONIZED DEPARTMENT DROP DOWN --- */}
-                      <div className="space-y-2">
-                        <Label htmlFor="department">
-                          Department <span className="text-destructive">*</span>
-                        </Label>
-                        <Select
-                          value={formData.department}
-                          onValueChange={(value) => setFormData({ ...formData, department: value })}
-                          disabled={isLoading}
-                        >
-                          <SelectTrigger id="department">
-                            <SelectValue placeholder="Select Department" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {availableDepartments.map((dept) => (
-                              <SelectItem key={dept} value={dept}>
-                                {dept}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="year">Year</Label>
-                        <Select
-                          value={formData.year}
-                          onValueChange={(value) => setFormData({ ...formData, year: value })}
-                          disabled={isLoading}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="1">1st Year</SelectItem>
-                            <SelectItem value="2">2nd Year</SelectItem>
-                            <SelectItem value="3">3rd Year</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="phone">Phone Number</Label>
-                        <Input
-                          id="phone"
-                          type="tel"
-                          placeholder="+91 98765 43210"
-                          value={formData.phone}
-                          onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                          disabled={isLoading}
-                        />
-                      </div>
-                    </div>
+              {/* STUDENT FIELDS - ALWAYS VISIBLE NOW */}
+              <div className="pt-4 border-t border-border">
+                <h3 className="text-sm font-medium mb-4">Academic Details</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="collegeId">
+                      College ID <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      id="collegeId"
+                      type="text"
+                      placeholder="e.g., CS2021001"
+                      value={formData.collegeId}
+                      onChange={(e) => setFormData({ ...formData, collegeId: e.target.value })}
+                      disabled={isLoading}
+                    />
                   </div>
-                </>
-              )}
+
+                  <div className="space-y-2">
+                    <Label htmlFor="enrollmentNumber">
+                      Enrollment Number <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      id="enrollmentNumber"
+                      type="text"
+                      placeholder="e.g., EN2021001"
+                      value={formData.enrollmentNumber}
+                      onChange={(e) =>
+                        setFormData({ ...formData, enrollmentNumber: e.target.value })
+                      }
+                      disabled={isLoading}
+                    />
+                  </div>
+
+                  {/* --- SYNCHRONIZED DEPARTMENT DROP DOWN --- */}
+                  <div className="space-y-2">
+                    <Label htmlFor="department">
+                      Department <span className="text-destructive">*</span>
+                    </Label>
+                    <Select
+                      value={formData.department}
+                      onValueChange={(value) => setFormData({ ...formData, department: value })}
+                      disabled={isLoading}
+                    >
+                      <SelectTrigger id="department">
+                        <SelectValue placeholder="Select Department" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableDepartments.map((dept) => (
+                          <SelectItem key={dept} value={dept}>
+                            {dept}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="year">Year</Label>
+                    <Select
+                      value={formData.year}
+                      onValueChange={(value) => setFormData({ ...formData, year: value })}
+                      disabled={isLoading}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1">1st Year</SelectItem>
+                        <SelectItem value="2">2nd Year</SelectItem>
+                        <SelectItem value="3">3rd Year</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="phone">Phone Number</Label>
+                    <Input
+                      id="phone"
+                      type="tel"
+                      placeholder="+91 98765 43210"
+                      value={formData.phone}
+                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                      disabled={isLoading}
+                    />
+                  </div>
+                </div>
+              </div>
 
               <Button type="submit" className="w-full" disabled={isLoading}>
                 {isLoading ? (

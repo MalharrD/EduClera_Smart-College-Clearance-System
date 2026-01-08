@@ -358,18 +358,6 @@ export default function Login() {
                   </div>
                 </form>
               )}
-
-              {/* --- FOOTER: DEMO INFO (Login View Only) --- */}
-              {view === 'login' && (
-                <div className="mt-6 pt-6 border-t border-border">
-                  <p className="text-xs text-muted-foreground mb-2">Demo Student Account:</p>
-                  <div className="bg-muted p-3 rounded text-xs">
-                    {/* UPDATED LABEL */}
-                    <p className="font-medium">Enrollment No: student1</p>
-                    <p className="text-muted-foreground">Password: student123</p>
-                  </div>
-                </div>
-              )}
             </CardContent>
           </Card>
         </div>

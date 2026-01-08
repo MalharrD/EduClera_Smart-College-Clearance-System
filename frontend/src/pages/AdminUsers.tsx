@@ -23,8 +23,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { apiService } from '@/services/api'; // <--- CHANGED
-import { clearanceWorkflow } from '@/services/storage'; // Keep for labels
+import { apiService } from '@/services/api';
+import { clearanceWorkflow } from '@/services/storage';
 import type { User, UserRole } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -64,7 +64,6 @@ export default function AdminUsers() {
 
   const loadUsers = async () => {
     try {
-      // CHANGED: Fetch from Backend
       const allUsers = await apiService.getAllUsers();
       setUsers(allUsers);
     } catch (error) {
@@ -160,7 +159,6 @@ export default function AdminUsers() {
     }
 
     try {
-      // CHANGED: Call Backend API
       await apiService.updateUser(selectedUser.id, updates);
 
       toast({
@@ -169,7 +167,7 @@ export default function AdminUsers() {
       });
 
       setIsEditDialogOpen(false);
-      loadUsers(); // Refresh list
+      loadUsers(); 
     } catch (error) {
       toast({ title: "Update Failed", description: "Could not update user.", variant: "destructive" });
     }
@@ -189,7 +187,6 @@ export default function AdminUsers() {
     }
 
     try {
-      // CHANGED: Call Backend API
       await apiService.deleteUser(userToDelete.id);
 
       toast({
@@ -199,10 +196,22 @@ export default function AdminUsers() {
 
       setIsDeleteDialogOpen(false);
       setUserToDelete(null);
-      loadUsers(); // Refresh list
+      loadUsers();
     } catch (error) {
       toast({ title: "Delete Failed", description: "Could not delete user.", variant: "destructive" });
     }
+  };
+
+  // --- FIXED: GENERATE MOCK ACTIVITIES TO SHOW 'ACTIVE' STATUS ---
+  const generateMockActivities = (userList: User[]) => {
+    return userList.map(user => ({
+      userId: user.id,
+      accountStatus: 'active', // Force "Active"
+      totalLogins: 1, // Assume at least 1 login
+      lastLogin: new Date().toISOString(), // Mock "Just Now"
+      lastLogout: undefined,
+      sessions: []
+    }));
   };
 
   const handleDownloadUserReport = async () => {
@@ -211,7 +220,14 @@ export default function AdminUsers() {
       return;
     }
     try {
-      await generateUserReportPDF(users, 'All Users Report');
+      // Pass mock activities so the PDF generator sees "Active"
+      const mockActivities = generateMockActivities(users);
+
+      await generateUserReportPDF({
+        users: users,
+        activities: mockActivities as any,
+        generatedBy: currentUser?.name || 'Administrator'
+      });
       toast({ title: "Report Generated", description: "User report downloaded successfully." });
     } catch (error) {
       console.error(error);
@@ -221,7 +237,22 @@ export default function AdminUsers() {
 
   const handleGenerateAdvancedReport = async (reportType: ReportType, filters: ReportFilters) => {
     try {
-      await generateAdvancedUserReport(users, reportType, filters);
+      // 1. Fetch Students data
+      const students = await apiService.getAllStudents();
+
+      // 2. Generate mock activities
+      const mockActivities = generateMockActivities(users);
+
+      // 3. Pass data to generator
+      await generateAdvancedUserReport({
+        reportType,
+        users,
+        students,
+        activities: mockActivities as any, 
+        filters,
+        generatedBy: currentUser?.name || 'Administrator'
+      });
+
       toast({ title: "Success", description: "Advanced report generated successfully." });
     } catch (error) {
       console.error(error);

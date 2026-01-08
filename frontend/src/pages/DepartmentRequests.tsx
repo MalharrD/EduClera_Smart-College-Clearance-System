@@ -16,7 +16,7 @@ import { apiService } from '@/services/api';
 import { clearanceWorkflow } from '@/services/storage';
 import type { ClearanceApproval, ClearanceRequest, Student } from '@/types';
 import { useToast } from '@/hooks/use-toast';
-import { CheckCircle, XCircle, FileText, AlertCircle } from 'lucide-react';
+import { CheckCircle, XCircle, FileText, AlertCircle, ExternalLink } from 'lucide-react';
 
 export default function DepartmentRequests() {
   const { user } = useAuth();
@@ -67,10 +67,9 @@ export default function DepartmentRequests() {
       });
       setStudentsMap(studMap);
 
-      // 3. Fetch full approval history (to check if previous dept approved)
+      // 3. Fetch full approval history
       const distinctRequestIds = [...new Set(myTasks.map((t: ClearanceApproval) => t.requestId))];
       
-      // Fetch only if we have request IDs
       if (distinctRequestIds.length > 0) {
         const historyPromises = distinctRequestIds.map((id) => apiService.getApprovals(id as string));
         const histories = await Promise.all(historyPromises);
@@ -94,7 +93,6 @@ export default function DepartmentRequests() {
   ) => {
     const request = requestsMap[approval.requestId];
     
-    // Safety check: if request is missing, we allow rejecting to clear the bad record
     if (!request) {
        if (action === 'reject') {
           setSelectedApproval(approval);
@@ -110,7 +108,6 @@ export default function DepartmentRequests() {
     const requestApprovals = fullApprovalsMap[approval.requestId] || [];
     const canApprove = clearanceWorkflow.canApprove(request.id, user!.role, request.type, requestApprovals);
     
-    // Workflow validation for approval
     if (!canApprove.canApprove && action === 'approve') {
       toast({
         title: 'Cannot Process Request',
@@ -142,19 +139,13 @@ export default function DepartmentRequests() {
       });
 
       setIsDialogOpen(false);
-      loadData(); // Refresh list
+      loadData();
     } catch (error) {
       toast({ title: "Error", description: "Failed to update status", variant: "destructive" });
     }
   };
 
-  if (!user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-muted-foreground">Loading...</p>
-      </div>
-    );
-  }
+  if (!user) return <div className="min-h-screen flex items-center justify-center"><p>Loading...</p></div>;
 
   const pendingApprovals = myApprovals.filter((a) => a.status === 'pending');
   const processedApprovals = myApprovals.filter((a) => a.status !== 'pending');
@@ -186,11 +177,9 @@ export default function DepartmentRequests() {
               ) : (
                 <div className="space-y-4">
                   {pendingApprovals.map((approval) => {
-                    // Try to find linked data
                     const request = requestsMap[approval.requestId];
                     const student = request ? studentsMap[request.studentId] : null;
 
-                    // Fallback UI if data is missing (prevents empty list)
                     if (!request || !student) {
                       return (
                         <Card key={approval.id} className="border-destructive/50 bg-destructive/5">
@@ -201,18 +190,17 @@ export default function DepartmentRequests() {
                                  </h3>
                                  <p className="text-sm text-muted-foreground mt-1">
                                     Approval ID: {approval.id.substring(0, 8)}...<br/>
-                                    Request ID: {approval.requestId} (Not Found in DB)
+                                    Request ID: {approval.requestId} (Not Found)
                                  </p>
                               </div>
                               <Button variant="destructive" size="sm" onClick={() => handleActionClick(approval, 'reject')}>
                                  Clear (Reject)
                               </Button>
-                           </CardContent> {/* <--- FIXED: Properly closed CardContent here */}
+                           </CardContent>
                         </Card>
                       );
                     }
 
-                    // Normal UI
                     const requestApprovals = fullApprovalsMap[approval.requestId] || [];
                     const canApprove = clearanceWorkflow.canApprove(
                       request.id,
@@ -244,6 +232,22 @@ export default function DepartmentRequests() {
                                 Submitted on {new Date(request.submittedAt).toLocaleString()}
                               </div>
 
+                              {/* --- DOCUMENT VIEWER BUTTON --- */}
+                              {request.pdfUrl && (
+                                <div className="mt-3">
+                                   <a 
+                                     href={request.pdfUrl} 
+                                     target="_blank" 
+                                     rel="noopener noreferrer"
+                                     className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-md border border-blue-200 transition-colors"
+                                   >
+                                     <FileText className="h-4 w-4" />
+                                     View Attached Document
+                                     <ExternalLink className="h-3 w-3 ml-1 opacity-50" />
+                                   </a>
+                                </div>
+                              )}
+
                               {!canApprove.canApprove && (
                                 <div className="mt-3 flex items-center gap-2 text-sm text-warning">
                                   <AlertCircle className="h-4 w-4" />
@@ -253,19 +257,11 @@ export default function DepartmentRequests() {
                             </div>
 
                             <div className="flex gap-2">
-                              <Button
-                                variant="outline"
-                                onClick={() => handleActionClick(approval, 'reject')}
-                              >
-                                <XCircle className="mr-2 h-4 w-4" />
-                                Reject
+                              <Button variant="outline" onClick={() => handleActionClick(approval, 'reject')}>
+                                <XCircle className="mr-2 h-4 w-4" /> Reject
                               </Button>
-                              <Button
-                                onClick={() => handleActionClick(approval, 'approve')}
-                                disabled={!canApprove.canApprove}
-                              >
-                                <CheckCircle className="mr-2 h-4 w-4" />
-                                Approve
+                              <Button onClick={() => handleActionClick(approval, 'approve')} disabled={!canApprove.canApprove}>
+                                <CheckCircle className="mr-2 h-4 w-4" /> Approve
                               </Button>
                             </div>
                           </div>
@@ -297,37 +293,27 @@ export default function DepartmentRequests() {
                     const request = requestsMap[approval.requestId];
                     const student = request ? studentsMap[request.studentId] : null;
 
-                    // Allow displaying processed items even if data is partial
                     return (
-                      <div
-                        key={approval.id}
-                        className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-4 border border-border rounded-lg"
-                      >
+                      <div key={approval.id} className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-4 border border-border rounded-lg">
                         <div className="flex-1">
                           <div className="flex items-center gap-3 mb-2">
                             <p className="font-medium">{student ? student.name : 'Unknown Student'}</p>
-                            <Badge
-                              className={
-                                approval.status === 'approved'
-                                  ? 'bg-success text-success-foreground'
-                                  : 'bg-destructive text-destructive-foreground'
-                              }
-                            >
+                            <Badge className={approval.status === 'approved' ? 'bg-success text-success-foreground' : 'bg-destructive text-destructive-foreground'}>
                               {approval.status === 'approved' ? 'Approved' : 'Rejected'}
                             </Badge>
                           </div>
                           <p className="text-sm text-muted-foreground">
                             {student ? student.collegeId : 'N/A'} | {request ? request.type : 'N/A'}
                           </p>
+                          {request?.pdfUrl && (
+                             <a href={request.pdfUrl} target="_blank" className="text-xs text-blue-500 hover:underline mt-1 block">View Document</a>
+                          )}
                           {approval.remarks && (
-                            <p className="text-sm text-muted-foreground mt-2">
-                              Remarks: {approval.remarks}
-                            </p>
+                            <p className="text-sm text-muted-foreground mt-2">Remarks: {approval.remarks}</p>
                           )}
                         </div>
                         <div className="text-sm text-muted-foreground">
-                          {approval.approvedAt &&
-                            new Date(approval.approvedAt).toLocaleDateString()}
+                          {approval.approvedAt && new Date(approval.approvedAt).toLocaleDateString()}
                         </div>
                       </div>
                     );
@@ -339,30 +325,19 @@ export default function DepartmentRequests() {
         </div>
       </div>
 
-      {/* Dialog for Actions */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {actionType === 'approve' ? 'Approve' : 'Reject'} Clearance Request
-            </DialogTitle>
-            <DialogDescription>
-               Process this request.
-            </DialogDescription>
+            <DialogTitle>{actionType === 'approve' ? 'Approve' : 'Reject'} Clearance Request</DialogTitle>
+            <DialogDescription>Process this request.</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="remarks">
-                Remarks {actionType === 'reject' && <span className="text-destructive">*</span>}
-              </Label>
+              <Label htmlFor="remarks">Remarks {actionType === 'reject' && <span className="text-destructive">*</span>}</Label>
               <Textarea
                 id="remarks"
-                placeholder={
-                  actionType === 'approve'
-                    ? 'Add any comments (optional)'
-                    : 'Please provide a reason for rejection'
-                }
+                placeholder={actionType === 'approve' ? 'Add any comments (optional)' : 'Please provide a reason for rejection'}
                 value={remarks}
                 onChange={(e) => setRemarks(e.target.value)}
                 rows={4}
@@ -374,9 +349,7 @@ export default function DepartmentRequests() {
           </div>
 
           <div className="flex gap-3 justify-end">
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
-              Cancel
-            </Button>
+            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
             <Button
               onClick={handleConfirmAction}
               disabled={actionType === 'reject' && !remarks.trim()}
