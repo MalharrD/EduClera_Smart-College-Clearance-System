@@ -7,14 +7,15 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { GraduationCap, Loader2, ShieldCheck, Mail, Smartphone, ArrowLeft } from 'lucide-react';
+import { GraduationCap, Loader2, ShieldCheck, Mail, Smartphone, ArrowLeft, UserCircle } from 'lucide-react';
+import { apiService } from '@/services/api'; // Import API service
 
 type ViewState = 'login' | 'forgot-password' | 'verify-otp' | 'reset-password';
 
 export default function Login() {
   const [view, setView] = useState<ViewState>('login');
-  // We use 'username' state to store Enrollment Number to keep compatible with AuthContext
-  const [username, setUsername] = useState('');
+  // Renamed to 'identifier' to reflect it can be ID or Email
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -31,35 +32,16 @@ export default function Login() {
   const { toast } = useToast();
 
   // --- FORGOT PASSWORD HANDLERS ---
-
   const handleSendOTP = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-
-    // SIMULATION: Check if user exists based on recovery contact
     setTimeout(() => {
-      // In a real app, you would verify if this Email/Mobile matches the Enrollment Number
-      let isValidUser = true;
-
-      if (!isValidUser) {
-        toast({
-          title: "User Not Found",
-          description: "The provided details do not match our records.",
-          variant: "destructive"
-        });
-        setIsLoading(false);
-        return;
-      }
-
       const mockOtp = Math.floor(1000 + Math.random() * 9000).toString();
       setGeneratedOtp(mockOtp);
-      console.log("SERVER OTP:", mockOtp);
-
       toast({
         title: "OTP Sent!",
-        description: `We have sent a code to your ${recoveryMethod}. (Test OTP: ${mockOtp})`
+        description: `Code sent to your ${recoveryMethod}. (Test OTP: ${mockOtp})`
       });
-
       setIsLoading(false);
       setView('verify-otp');
     }, 1500);
@@ -68,13 +50,12 @@ export default function Login() {
   const handleVerifyOTP = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-
     setTimeout(() => {
       if (otpInput === generatedOtp) {
         toast({ title: "Success", description: "OTP Verified successfully." });
         setView('reset-password');
       } else {
-        toast({ title: "Invalid OTP", description: "The code you entered is incorrect.", variant: "destructive" });
+        toast({ title: "Invalid OTP", description: "Incorrect code.", variant: "destructive" });
       }
       setIsLoading(false);
     }, 1000);
@@ -86,14 +67,11 @@ export default function Login() {
       toast({ title: "Mismatch", description: "Passwords do not match.", variant: "destructive" });
       return;
     }
-
     setIsLoading(true);
-    // SIMULATION: Call API to update password
     setTimeout(() => {
-      toast({ title: "Password Reset", description: "Your password has been changed successfully. Please login." });
+      toast({ title: "Password Reset", description: "Password changed. Please login." });
       setIsLoading(false);
       setView('login');
-      // Reset sensitive fields
       setNewPassword('');
       setConfirmNewPassword('');
       setOtpInput('');
@@ -101,16 +79,14 @@ export default function Login() {
     }, 1500);
   };
 
-  // --- LOGIN HANDLER ---
-
+  // --- LOGIN HANDLER (UPDATED) ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!username || !password) {
+    if (!identifier || !password) {
       toast({
         title: 'Error',
-        // UPDATED ERROR MESSAGE
-        description: 'Please enter both enrollment number and password',
+        description: 'Please enter both Enrollment ID and password',
         variant: 'destructive',
       });
       return;
@@ -119,12 +95,26 @@ export default function Login() {
     setIsLoading(true);
 
     try {
-      const user = await login(username, password);
+      let loginEmail = identifier.trim();
+
+      // Check if input is NOT an email (assuming it's an Enrollment ID)
+      if (!loginEmail.includes('@')) {
+        // Resolve Enrollment ID to Email via Backend
+        const result = await apiService.resolveEnrollment(loginEmail);
+        
+        if (!result || !result.email) {
+          throw new Error('Enrollment ID not found. Please check or register first.');
+        }
+        loginEmail = result.email;
+      }
+
+      // Proceed with Login using the resolved Email
+      const user = await login(loginEmail, password);
 
       if (user.role !== 'student') {
         toast({
           title: 'Access Denied',
-          description: 'This is the student login portal. Please use Staff Login.',
+          description: 'This is the student portal. Please use Staff Login.',
           variant: 'destructive',
         });
         return;
@@ -137,6 +127,7 @@ export default function Login() {
 
       navigate('/dashboard');
     } catch (error) {
+      console.error(error);
       toast({
         title: 'Login Failed',
         description: error instanceof Error ? error.message : 'Invalid credentials',
@@ -160,10 +151,9 @@ export default function Login() {
   const getCardDesc = () => {
     switch (view) {
       case 'forgot-password': return 'Recover your account access';
-      case 'verify-otp': return `Enter the code sent to your ${recoveryMethod}`;
+      case 'verify-otp': return `Enter code sent to ${recoveryMethod}`;
       case 'reset-password': return 'Create a strong new password';
-      // UPDATED DESCRIPTION
-      default: return 'Enter your enrollment number to continue';
+      default: return 'Enter Enrollment ID to continue';
     }
   };
 
@@ -181,14 +171,14 @@ export default function Login() {
         <div className="w-full max-w-md">
           <div className="flex justify-center mb-8">
             <div className="flex items-center gap-2">
-              <div className="bg-primary text-primary-foreground p-3 rounded-xl">
+              <div className="bg-primary text-primary-foreground p-3 rounded-xl shadow-lg">
                 <GraduationCap className="h-8 w-8" />
               </div>
               <span className="text-3xl font-bold text-foreground">EduClera</span>
             </div>
           </div>
 
-          <Card>
+          <Card className="border-t-4 border-t-primary shadow-xl">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
@@ -203,7 +193,7 @@ export default function Login() {
                     className="text-primary hover:text-primary"
                   >
                     <ShieldCheck className="mr-2 h-4 w-4" />
-                    Staff Login
+                    Staff
                   </Button>
                 )}
                 {view !== 'login' && (
@@ -212,122 +202,80 @@ export default function Login() {
                     size="sm"
                     onClick={() => setView('login')}
                   >
-                    <ArrowLeft className="mr-2 h-4 w-4" />
-                    Back
+                    <ArrowLeft className="mr-2 h-4 w-4" /> Back
                   </Button>
                 )}
               </div>
             </CardHeader>
             <CardContent>
 
-              {/* --- VIEW 1: FORGOT PASSWORD START --- */}
+              {/* --- FORGOT PASSWORD VIEWS (Unchanged logic) --- */}
               {view === 'forgot-password' && (
                 <form onSubmit={handleSendOTP} className="space-y-6">
+                  {/* ... (Same as before) ... */}
                   <RadioGroup defaultValue="email" onValueChange={(v) => setRecoveryMethod(v as 'email' | 'mobile')} className="grid grid-cols-2 gap-4">
                     <div>
                       <RadioGroupItem value="email" id="email-opt" className="peer sr-only" />
-                      <Label
-                        htmlFor="email-opt"
-                        className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary"
-                      >
-                        <Mail className="mb-2 h-6 w-6" />
-                        Gmail
+                      <Label htmlFor="email-opt" className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary">
+                        <Mail className="mb-2 h-6 w-6" /> Gmail
                       </Label>
                     </div>
                     <div>
                       <RadioGroupItem value="mobile" id="mobile-opt" className="peer sr-only" />
-                      <Label
-                        htmlFor="mobile-opt"
-                        className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary"
-                      >
-                        <Smartphone className="mb-2 h-6 w-6" />
-                        Mobile
+                      <Label htmlFor="mobile-opt" className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary">
+                        <Smartphone className="mb-2 h-6 w-6" /> Mobile
                       </Label>
                     </div>
                   </RadioGroup>
-
                   <div className="space-y-2">
-                    <Label htmlFor="contact">
-                      {recoveryMethod === 'email' ? 'Registered Email' : 'Registered Mobile'}
-                    </Label>
-                    <Input
-                      id="contact"
-                      type={recoveryMethod === 'email' ? 'email' : 'tel'}
-                      placeholder={recoveryMethod === 'email' ? 'student@example.com' : '9876543210'}
-                      value={contactValue}
-                      onChange={(e) => setContactValue(e.target.value)}
-                      required
-                    />
+                    <Label htmlFor="contact">{recoveryMethod === 'email' ? 'Registered Email' : 'Registered Mobile'}</Label>
+                    <Input id="contact" value={contactValue} onChange={(e) => setContactValue(e.target.value)} required />
                   </div>
-                  <Button type="submit" className="w-full" disabled={isLoading}>
-                    {isLoading ? <Loader2 className="animate-spin h-4 w-4 mr-2" /> : "Send OTP"}
-                  </Button>
+                  <Button type="submit" className="w-full" disabled={isLoading}>{isLoading ? <Loader2 className="animate-spin h-4 w-4" /> : "Send OTP"}</Button>
                 </form>
               )}
 
-              {/* --- VIEW 2: VERIFY OTP --- */}
               {view === 'verify-otp' && (
                 <form onSubmit={handleVerifyOTP} className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="otp">One-Time Password (OTP)</Label>
-                    <Input
-                      id="otp"
-                      placeholder="Enter 4-digit code"
-                      className="text-center text-lg tracking-widest"
-                      maxLength={4}
-                      value={otpInput}
-                      onChange={(e) => setOtpInput(e.target.value)}
-                    />
+                    <Label htmlFor="otp">One-Time Password</Label>
+                    <Input id="otp" className="text-center text-lg tracking-widest" maxLength={4} value={otpInput} onChange={(e) => setOtpInput(e.target.value)} />
                   </div>
-                  <Button type="submit" className="w-full" disabled={isLoading}>
-                    {isLoading ? "Verifying..." : "Verify & Proceed"}
-                  </Button>
+                  <Button type="submit" className="w-full" disabled={isLoading}>{isLoading ? "Verifying..." : "Verify & Proceed"}</Button>
                 </form>
               )}
 
-              {/* --- VIEW 3: RESET PASSWORD --- */}
               {view === 'reset-password' && (
                 <form onSubmit={handleResetPassword} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="newPass">New Password</Label>
-                    <Input id="newPass" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="confPass">Confirm Password</Label>
-                    <Input id="confPass" type="password" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} required />
-                  </div>
-                  <Button type="submit" className="w-full" disabled={isLoading}>
-                    {isLoading ? "Updating..." : "Reset Password"}
-                  </Button>
+                  <div className="space-y-2"><Label htmlFor="newPass">New Password</Label><Input id="newPass" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required /></div>
+                  <div className="space-y-2"><Label htmlFor="confPass">Confirm Password</Label><Input id="confPass" type="password" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} required /></div>
+                  <Button type="submit" className="w-full" disabled={isLoading}>{isLoading ? "Updating..." : "Reset Password"}</Button>
                 </form>
               )}
 
-              {/* --- VIEW 4: NORMAL LOGIN --- */}
+              {/* --- LOGIN VIEW (UPDATED) --- */}
               {view === 'login' && (
                 <form onSubmit={handleSubmit} className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="email">Email Address</Label> {/* Changed from Enrollment Number */}
-                    <Input
-                      id="email"
-                      type="email"
-                      placeholder="Enter your email"
-                      value={username} // You can rename this state variable to 'email' if you want
-                      onChange={(e) => setUsername(e.target.value)}
-                      disabled={isLoading}
-                    />
+                    <Label htmlFor="identifier">Enrollment ID</Label>
+                    <div className="relative">
+                      <UserCircle className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="identifier"
+                        type="text"
+                        placeholder="e.g. EN202100589"
+                        className="pl-9"
+                        value={identifier}
+                        onChange={(e) => setIdentifier(e.target.value)}
+                        disabled={isLoading}
+                      />
+                    </div>
                   </div>
 
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <Label htmlFor="password">Password</Label>
-                      <Button
-                        variant="link"
-                        className="p-0 h-auto text-xs text-primary"
-                        type="button"
-                        onClick={() => setView('forgot-password')}
-                      >
-                        Forgot Password?
-                      </Button>
+                      <Button variant="link" className="p-0 h-auto text-xs text-primary" type="button" onClick={() => setView('forgot-password')}>Forgot Password?</Button>
                     </div>
                     <Input
                       id="password"
@@ -340,21 +288,11 @@ export default function Login() {
                   </div>
 
                   <Button type="submit" className="w-full" disabled={isLoading}>
-                    {isLoading ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Signing in...
-                      </>
-                    ) : (
-                      'Sign In'
-                    )}
+                    {isLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Authenticating...</> : 'Sign In'}
                   </Button>
 
                   <div className="text-center text-sm text-muted-foreground">
-                    Don't have an account?{' '}
-                    <Link to="/register" className="text-primary hover:underline font-medium">
-                      Register here
-                    </Link>
+                    Don't have an account? <Link to="/register" className="text-primary hover:underline font-medium">Register here</Link>
                   </div>
                 </form>
               )}

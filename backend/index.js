@@ -5,23 +5,21 @@ const cors = require('cors');
 
 const app = express();
 
+// --- CONFIGURATION ---
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
-  'https://educlera.onrender.com', // <--- ADDED YOUR EXACT FRONTEND URL
-  process.env.FRONTEND_URL         // Catches the Env Var if set
+  'https://educlera.onrender.com', 
+  process.env.FRONTEND_URL
 ];
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl)
     if (!origin) return callback(null, true);
-    
-    // Check if origin is in the allowed list
     if (allowedOrigins.includes(origin) || !process.env.NODE_ENV) {
       return callback(null, true);
     } else {
-      console.log('Blocked by CORS:', origin); // Log blocked origins for debugging
+      console.log('Blocked by CORS:', origin);
       return callback(new Error('Not allowed by CORS'));
     }
   },
@@ -49,21 +47,13 @@ mongoose.connection.on('disconnected', () => {
   console.log('⚠️ MongoDB Disconnected');
 });
 
-mongoose.connection.on('reconnected', () => {
-  console.log('✅ MongoDB Reconnected');
-});
-
 connectDB();
 
-// --- SMART CONFIGURATION (The Fix for Data Mismatch) ---
 const toJSONConfig = {
   virtuals: true,
   versionKey: false,
   transform: (doc, ret) => {
-    // Only replace id with _id if the document DOES NOT have its own custom 'id' field
-    if (!ret.id) {
-      ret.id = ret._id.toString();
-    }
+    if (!ret.id) ret.id = ret._id.toString();
     delete ret._id;
     delete ret.__v;
     return ret;
@@ -85,11 +75,11 @@ const UserSchema = new mongoose.Schema({
 UserSchema.set('toJSON', toJSONConfig);
 
 const StudentSchema = new mongoose.Schema({
-  id: String, // Custom ID (s1...)
+  id: String,
   userId: { type: String, required: true },
   name: String,
   collegeId: String,
-  enrollmentNumber: String,
+  enrollmentNumber: { type: String, unique: true },
   department: String,
   year: Number,
   email: String,
@@ -98,7 +88,7 @@ const StudentSchema = new mongoose.Schema({
 StudentSchema.set('toJSON', toJSONConfig);
 
 const RequestSchema = new mongoose.Schema({
-  id: String, // Custom ID (req_...)
+  id: String,
   studentId: String,
   type: String, 
   status: String,
@@ -109,7 +99,7 @@ const RequestSchema = new mongoose.Schema({
 RequestSchema.set('toJSON', toJSONConfig);
 
 const ApprovalSchema = new mongoose.Schema({
-  id: String, // Custom ID (approval_...)
+  id: String,
   requestId: String,
   department: String,
   status: String,
@@ -128,19 +118,89 @@ const Approval = mongoose.model('Approval', ApprovalSchema);
 
 // --- ROUTES ---
 
-// 1. Auth & Profiles
-app.post('/api/users', async (req, res) => {
+// ==========================================
+// 1. AUTH ROUTES (Matched to Frontend)
+// ==========================================
+
+// Resolve Enrollment ID to Email
+app.post('/api/auth/resolve-enrollment', async (req, res) => {
+  try {
+    const { enrollmentNumber } = req.body;
+    if (!enrollmentNumber) return res.status(400).json({ error: 'Enrollment ID required' });
+
+    const student = await Student.findOne({ enrollmentNumber });
+    if (!student) return res.status(404).json({ error: 'Enrollment ID not registered' });
+
+    const user = await User.findOne({ supabaseId: student.userId });
+    if (!user) return res.status(404).json({ error: 'User account not found' });
+
+    res.json({ email: user.email });
+  } catch (err) {
+    console.error("Resolve Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Sync User (Supabase -> MongoDB)
+// Matches frontend call: /api/auth/sync-user
+app.post('/api/auth/sync-user', async (req, res) => {
   try {
     const { supabaseId, ...userData } = req.body;
     const user = await User.findOneAndUpdate(
       { supabaseId },
-      { ...userData, supabaseId },
+      { ...userData, supabaseId, updatedAt: new Date() },
       { upsert: true, new: true }
     );
     res.json(user);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Get User Profile (User + Student Data)
+// Matches frontend call: /api/auth/profile/:userId
+// --- FIXES THE 404 ERROR ---
+app.get('/api/auth/profile/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await User.findOne({ supabaseId: userId });
+    
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    let studentData = null;
+    if (user.role === 'student') {
+      studentData = await Student.findOne({ userId: user.supabaseId });
+    }
+    res.json({ user, student: studentData });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Create Student Profile
+// Matches frontend call: /api/auth/student-profile
+app.post('/api/auth/student-profile', async (req, res) => {
+  try {
+    // Check for existing enrollment ID
+    const existing = await Student.findOne({ enrollmentNumber: req.body.enrollmentNumber });
+    if (existing) {
+       return res.status(400).json({ error: 'Enrollment Number already exists' });
+    }
+    const student = await Student.create(req.body);
+    res.json(student);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// ==========================================
+// 2. EXISTING RESOURCE ROUTES
+// ==========================================
+
+// Users
+app.get('/api/users', async (req, res) => {
+  try {
+    const users = await User.find().sort({ createdAt: -1 });
+    res.json(users);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Kept for backward compatibility
 app.get('/api/users/:supabaseId', async (req, res) => {
   try {
     const user = await User.findOne({ supabaseId: req.params.supabaseId });
@@ -154,21 +214,9 @@ app.get('/api/users/:supabaseId', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 2. Admin User Management (New)
-app.get('/api/users', async (req, res) => {
-  try {
-    const users = await User.find().sort({ createdAt: -1 });
-    res.json(users);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
 app.put('/api/users/:id', async (req, res) => {
   try {
-    // Find by either custom id or MongoDB _id
-    const query = mongoose.isValidObjectId(req.params.id) 
-      ? { _id: req.params.id } 
-      : { id: req.params.id };
-
+    const query = mongoose.isValidObjectId(req.params.id) ? { _id: req.params.id } : { id: req.params.id };
     const user = await User.findOneAndUpdate(query, req.body, { new: true });
     res.json(user);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -176,29 +224,16 @@ app.put('/api/users/:id', async (req, res) => {
 
 app.delete('/api/users/:id', async (req, res) => {
   try {
-    const query = mongoose.isValidObjectId(req.params.id) 
-      ? { _id: req.params.id } 
-      : { id: req.params.id };
-
+    const query = mongoose.isValidObjectId(req.params.id) ? { _id: req.params.id } : { id: req.params.id };
     const user = await User.findOneAndDelete(query);
     if (!user) return res.status(404).json({ error: 'User not found' });
     
-    // Clean up student profile if exists
-    if (user.role === 'student') {
-      await Student.findOneAndDelete({ userId: user.supabaseId });
-    }
+    if (user.role === 'student') await Student.findOneAndDelete({ userId: user.supabaseId });
     res.json({ message: 'User deleted' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 3. Students
-app.post('/api/students', async (req, res) => {
-  try {
-    const student = await Student.create(req.body);
-    res.json(student);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
+// Students
 app.get('/api/students', async (req, res) => {
   try {
     const students = await Student.find();
@@ -206,7 +241,7 @@ app.get('/api/students', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 4. Requests
+// Requests
 app.post('/api/requests', async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -220,7 +255,6 @@ app.post('/api/requests', async (req, res) => {
     res.json({ success: true, request });
   } catch (err) {
     await session.abortTransaction();
-    console.error("Transaction Error:", err);
     res.status(500).json({ error: err.message });
   } finally {
     session.endSession();
@@ -241,31 +275,17 @@ app.get('/api/requests/student/:studentId', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 5. Approvals & Workflow
+// Approvals
 app.get('/api/approvals', async (req, res) => {
   try {
     const { role, name, requestId } = req.query;
     let query = {};
-    
     if (requestId) {
       query.requestId = requestId;
     } else if (role || name) {
-      query = {
-        $or: [
-          { department: role },
-          { assignedTo: name } 
-        ]
-      };
+      query = { $or: [{ department: role }, { assignedTo: name }] };
     }
-    
     const approvals = await Approval.find(query);
-    res.json(approvals);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.get('/api/approvals/:requestId', async (req, res) => {
-  try {
-    const approvals = await Approval.find({ requestId: req.params.requestId });
     res.json(approvals);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -275,24 +295,15 @@ app.put('/api/approvals/:id', async (req, res) => {
   session.startTransaction();
   try {
     const { status, remarks, approvedBy } = req.body;
-    
-    // Updates Approval
     const approval = await Approval.findOneAndUpdate(
       { id: req.params.id }, 
-      { 
-        status, 
-        remarks, 
-        approvedBy, 
-        approvedAt: new Date().toISOString() 
-      },
+      { status, remarks, approvedBy, approvedAt: new Date().toISOString() },
       { new: true, session }
     );
 
     if (!approval) throw new Error("Approval not found");
 
-    // Check parent Request status
     const allApprovals = await Approval.find({ requestId: approval.requestId }).session(session);
-    
     const anyRejected = allApprovals.some(a => a.status === 'rejected');
     const allApproved = allApprovals.every(a => a.status === 'approved');
 
@@ -303,10 +314,7 @@ app.put('/api/approvals/:id', async (req, res) => {
     if (newRequestStatus !== 'pending') {
       await Request.findOneAndUpdate(
         { id: approval.requestId },
-        { 
-          status: newRequestStatus,
-          completedAt: newRequestStatus === 'approved' ? new Date().toISOString() : undefined 
-        },
+        { status: newRequestStatus, completedAt: newRequestStatus === 'approved' ? new Date().toISOString() : undefined },
         { session }
       );
     }

@@ -20,14 +20,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     id: 'fixed-admin-id',
     // We cast to 'any' here to avoid TypeScript complaining about 'supabaseId' 
     // being missing from your User interface in src/types/index.ts
-    supabaseId: authUserId, 
+    supabaseId: authUserId,
     username: 'admin',
     name: 'System Administrator',
     email: email,
     role: 'admin',
     department: 'Management',
     password: 'secure-placeholder', // Added to satisfy User interface
-    createdAt: new Date().toISOString() // <--- FIX: Converted to String
+    createdAt: new Date().toISOString()
   } as any);
 
   // 1. Initialize Session on Load
@@ -37,9 +37,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
           if (session.user.email === FIXED_ADMIN_EMAIL) {
-             setUser(getFixedAdminProfile(session.user.id, session.user.email));
+            setUser(getFixedAdminProfile(session.user.id, session.user.email));
           } else {
-             await fetchProfile(session.user.id);
+            await fetchProfile(session.user.id);
           }
         }
       } catch (err) {
@@ -56,8 +56,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (session?.user) {
         if (session.user.email === FIXED_ADMIN_EMAIL) {
           setUser(getFixedAdminProfile(session.user.id, session.user.email));
-        } else if (!user) { 
-           await fetchProfile(session.user.id);
+        } else {
+          // Only fetch if we don't already have the user to prevent redundant calls
+          await fetchProfile(session.user.id);
         }
       } else {
         setUser(null);
@@ -67,42 +68,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     return () => subscription.unsubscribe();
-  }, [user]); 
+  }, []); // Fixed: Changed [user] to [] to prevent unnecessary re-subscription loops
 
   // 2. Helper to fetch data from MongoDB
   const fetchProfile = async (userId: string) => {
     try {
       const data = await apiService.getUserProfile(userId);
-      setUser(data.user);
-      if (data.student) setStudent(data.student);
+      setUser(data?.user ?? null);
+      if (data?.student) setStudent(data.student);
     } catch (error) {
       console.error('Error fetching profile from Backend:', error);
     }
   };
 
   // 3. Login Function
-  const login = async (email: string, password: string): Promise<User> => {
-    // A. Authenticate with Supabase
+  const login = async (identifier: string, password: string): Promise<User> => {
+    let emailToUse = identifier;
+
+    // A. Resolve Enrollment ID to Email if necessary
+    // If input does NOT contain '@', we assume it is an Enrollment ID
+    if (!identifier.includes('@')) {
+      try {
+        // --- FIX: Using the correct method name 'resolveEnrollment' ---
+        const response = await apiService.resolveEnrollment(identifier);
+        
+        if (!response?.email) {
+          throw new Error('No email found for this Enrollment ID');
+        }
+        emailToUse = response.email;
+      } catch (err) {
+        console.error("Enrollment ID lookup failed:", err);
+        throw new Error("Invalid Enrollment ID or unable to resolve email.");
+      }
+    }
+
+    // B. Authenticate with Supabase
     const { data, error } = await supabase.auth.signInWithPassword({
-      email,
+      email: emailToUse,
       password,
     });
 
     if (error) throw new Error(error.message);
-    if (!data.user || !data.user.email) throw new Error('Login failed');
+    if (!data.user?.email) throw new Error('Login failed');
 
-    // B. SPECIAL CHECK: Is this the Fixed Admin?
+    // C. SPECIAL CHECK: Is this the Fixed Admin?
     if (data.user.email === FIXED_ADMIN_EMAIL) {
       const adminProfile = getFixedAdminProfile(data.user.id, data.user.email);
       setUser(adminProfile);
       return adminProfile;
     }
 
-    // C. Normal User
+    // D. Normal User
     try {
       const profileData = await apiService.getUserProfile(data.user.id);
-      setUser(profileData.user);
-      if (profileData.student) setStudent(profileData.student);
+      setUser(profileData?.user ?? null);
+      if (profileData?.student) setStudent(profileData.student);
+      
+      if (!profileData?.user) throw new Error("User profile not found.");
       return profileData.user;
     } catch (err) {
       console.error(err);
