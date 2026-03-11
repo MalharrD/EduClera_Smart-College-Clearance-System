@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { storageService } from '@/services/storage';
 import type { ClearanceRequest } from '@/types';
 import { 
@@ -23,16 +24,18 @@ export default function StudentDashboard() {
     name: student?.name || '',
     email: student?.email || '',
     phone: student?.phone || '',
+    year: student?.year || 1,
+    semester: student?.semester || 1,
     photoUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=" + (student?.email || 'student')
   });
 
   useEffect(() => {
     if (student) {
-      const studentRequests = storageService.getRequestsByStudentId(student.id);
+      const studentRequests = storageService.getRequestsByStudentId(student?.id || '');
       setRequests(studentRequests);
       
       // Load custom profile data if saved in localStorage
-      const savedProfile = localStorage.getItem(`student_profile_${student.id}`);
+      const savedProfile = localStorage.getItem(`student_profile_${student?.id}`);
       if (savedProfile) {
         setProfile(JSON.parse(savedProfile));
       }
@@ -61,7 +64,7 @@ export default function StudentDashboard() {
 
   const handleSaveProfile = () => {
     if (student) {
-      localStorage.setItem(`student_profile_${student.id}`, JSON.stringify(profile));
+      localStorage.setItem(`student_profile_${student?.id}`, JSON.stringify(profile));
     }
     setIsEditing(false);
   };
@@ -97,7 +100,7 @@ export default function StudentDashboard() {
         <div className="flex justify-between items-end">
           <div>
             <h1 className="text-3xl font-bold text-foreground">Student Dashboard</h1>
-            <p className="text-muted-foreground mt-2 font-medium">Welcome back, {profile.name}!</p>
+            <p className="text-muted-foreground mt-2 font-medium">Welcome back, {profile?.name}!</p>
           </div>
         </div>
 
@@ -165,7 +168,7 @@ export default function StudentDashboard() {
               <div className="relative mb-6 group">
                 <div className="h-32 w-32 rounded-full ring-4 ring-white shadow-xl overflow-hidden bg-muted">
                   <img 
-                    src={profile.photoUrl} 
+                    src={profile?.photoUrl} 
                     alt="Profile" 
                     className="h-full w-full object-cover"
                   />
@@ -195,34 +198,75 @@ export default function StudentDashboard() {
                   <div className="space-y-3">
                     <div className="space-y-1">
                       <p className="text-[10px] font-bold uppercase text-muted-foreground ml-1">Full Name</p>
-                      <Input value={profile.name} onChange={(e) => setProfile({...profile, name: e.target.value})} />
+                      <Input value={profile?.name} onChange={(e) => setProfile({...profile, name: e.target.value})} />
                     </div>
                     <div className="space-y-1">
                       <p className="text-[10px] font-bold uppercase text-muted-foreground ml-1">Email</p>
-                      <Input value={profile.email} onChange={(e) => setProfile({...profile, email: e.target.value})} />
+                      <Input value={profile?.email} onChange={(e) => setProfile({...profile, email: e.target.value})} />
                     </div>
                     <div className="space-y-1">
                       <p className="text-[10px] font-bold uppercase text-muted-foreground ml-1">Phone</p>
-                      <Input value={profile.phone} onChange={(e) => setProfile({...profile, phone: e.target.value})} />
+                      <Input value={profile?.phone} onChange={(e) => setProfile({...profile, phone: e.target.value})} />
                     </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <p className="text-[10px] font-bold uppercase text-muted-foreground ml-1">Year</p>
+                        <Select 
+                          value={profile?.year?.toString() || "1"} 
+                          onValueChange={(v) => setProfile({...profile, year: Number(v)})}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select Year" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="1">1st Year</SelectItem>
+                            <SelectItem value="2">2nd Year</SelectItem>
+                            <SelectItem value="3">3rd Year</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] font-bold uppercase text-muted-foreground ml-1">Semester</p>
+                        <Select 
+                          value={profile?.semester?.toString() || "1"} 
+                          onValueChange={(v) => setProfile({...profile, semester: Number(v)})}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select Semester" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="1">Semester 1</SelectItem>
+                            <SelectItem value="2">Semester 2</SelectItem>
+                            <SelectItem value="3">Semester 3</SelectItem>
+                            <SelectItem value="4">Semester 4</SelectItem>
+                            <SelectItem value="5">Semester 5</SelectItem>
+                            <SelectItem value="6">Semester 6</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
                   </div>
                 ) : (
                   <div className="text-center">
-                    <h3 className="text-xl font-bold text-foreground">{profile.name}</h3>
-                    <p className="text-sm font-semibold text-primary/80 uppercase tracking-tight">{student.department} • Year {student.year}</p>
+                    <h3 className="text-xl font-bold text-foreground">{profile?.name}</h3>
+                    <p className="text-sm font-semibold text-primary/80 uppercase tracking-tight">
+                      {student?.department} • Year {profile?.year} • Sem {profile?.semester}
+                    </p>
                     
                     <div className="mt-6 space-y-3 text-left border-t pt-4">
                       <div className="flex items-center text-sm text-muted-foreground">
                         <User className="mr-3 h-4 w-4 text-primary/60" />
-                        <span className="font-medium text-foreground">{student.collegeId}</span>
+                        <span className="font-medium text-foreground">{student?.collegeId}</span>
                       </div>
                       <div className="flex items-center text-sm text-muted-foreground">
                         <Mail className="mr-3 h-4 w-4 text-primary/60" />
-                        <span>{profile.email}</span>
+                        <span>{profile?.email}</span>
                       </div>
                       <div className="flex items-center text-sm text-muted-foreground">
                         <Phone className="mr-3 h-4 w-4 text-primary/60" />
-                        <span>{profile.phone || 'No phone added'}</span>
+                        <span>{profile?.phone || 'No phone added'}</span>
                       </div>
                       <div className="flex items-center text-sm text-muted-foreground">
                         <MapPin className="mr-3 h-4 w-4 text-primary/60" />

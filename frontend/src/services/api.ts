@@ -1,9 +1,8 @@
 import axios from 'axios';
 import type { User, Student, ClearanceRequest, ClearanceApproval } from '@/types';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = 'http://localhost:5000/api';
 
-// Create an axios instance for cleaner calls
 const api = axios.create({
   baseURL: API_URL,
   headers: {
@@ -12,34 +11,48 @@ const api = axios.create({
 });
 
 export const apiService = {
-  // --- AUTH HELPERS ---
-  /**
-   * Resolves an Enrollment ID to an Email address.
-   * Required for Supabase login using Enrollment ID.
-   */
+  // --- NEW DEPARTMENT METHODS ---
+  async getDepartments() {
+    try {
+      const response = await api.get('/departments');
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching departments:', error);
+      return [];
+    }
+  },
+
+  async addDepartment(name: string) {
+    const response = await api.post('/departments', { name });
+    return response.data;
+  },
+
+  async deleteDepartment(name: string) {
+    const response = await api.delete(`/departments/${encodeURIComponent(name)}`);
+    return response.data;
+  },
+  // -----------------------------
+
   resolveEnrollment: async (enrollmentNumber: string): Promise<{ email: string } | null> => {
     try {
       const response = await api.post('/auth/resolve-enrollment', { enrollmentNumber });
       return response.data;
     } catch (error) {
       console.error('Error resolving enrollment:', error);
-      // We return null here so the UI can handle the "ID not found" error gracefully
       return null;
     }
   },
 
-  // --- USER & PROFILE ---
   async syncUser(user: Partial<User> & { supabaseId: string }) {
-    const response = await api.post('/auth/sync-user', user); // Changed endpoint to match AuthController
+    const response = await api.post('/auth/sync-user', user); 
     return response.data;
   },
 
   async getUserProfile(supabaseId: string) {
-    const response = await api.get(`/auth/profile/${supabaseId}`); // Changed to use the new Auth/Profile route
+    const response = await api.get(`/auth/profile/${supabaseId}`); 
     return response.data;
   },
 
-  // --- ADMIN USER MANAGEMENT ---
   async getAllUsers() {
     const response = await api.get('/users');
     return response.data;
@@ -55,9 +68,8 @@ export const apiService = {
     return response.data;
   },
 
-  // --- STUDENT & DATA ---
   async createStudentProfile(student: Partial<Student>) {
-    const response = await api.post('/auth/student-profile', student); // Changed to match AuthController
+    const response = await api.post('/auth/student-profile', student); 
     return response.data;
   },
 
@@ -66,7 +78,6 @@ export const apiService = {
     return response.data;
   },
 
-  // --- REQUESTS ---
   async createRequest(payload: { request: ClearanceRequest; approvals: ClearanceApproval[] }) {
     const response = await api.post('/requests', payload);
     return response.data;
@@ -82,16 +93,13 @@ export const apiService = {
     return response.data;
   },
 
-  // --- APPROVALS ---
   async getApprovals(requestId: string) {
     const response = await api.get('/approvals', { params: { requestId } });
     return response.data;
   },
 
   async getStaffApprovals(role: string, name: string) {
-    const response = await api.get('/approvals', { 
-      params: { role, name } 
-    });
+    const response = await api.get('/approvals', { params: { role, name } });
     return response.data;
   },
 

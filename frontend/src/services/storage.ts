@@ -151,7 +151,7 @@ export const storageService = {
 
   getApprovalByRequestAndDepartment(
     requestId: string,
-    department: UserRole
+    department: UserRole | string
   ): ClearanceApproval | null {
     const approvals = this.getApprovals();
     return approvals.find((a) => a.requestId === requestId && a.department === department) || null;
@@ -171,23 +171,7 @@ export const storageService = {
   },
 
   initializeSampleData(): void {
-    const users = this.getUsers();
-    if (users.length === 0) {
-      // Sample data logic preserved for legacy support
-      const sampleUsers: User[] = [
-        {
-          id: '1',
-          username: 'admin',
-          password: 'admin123',
-          name: 'Admin User',
-          email: 'admin@educlear.com',
-          role: 'admin',
-          createdAt: new Date().toISOString(),
-        },
-        // ... (other sample users would go here, kept brief for this file update)
-      ];
-      this.setUsers(sampleUsers);
-    }
+    // Relying on MongoDB
   },
 
   clearAll(): void {
@@ -254,7 +238,7 @@ export const storageService = {
   },
 
   recordLogin(userId: string): string {
-    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const loginTime = new Date().toISOString();
 
     const session: UserSession = {
@@ -294,7 +278,6 @@ export const storageService = {
         duration,
       });
 
-      const activity = this.getUserActivity(userId);
       const updatedSessions = this.getUserSessions().filter((s) => s.userId === userId);
       
       this.updateUserActivity(userId, {
@@ -306,8 +289,9 @@ export const storageService = {
 };
 
 export const clearanceWorkflow = {
+  // --- STRICT SEQUENTIAL HALL TICKET WORKFLOW ---
   getHallTicketDepartments(): UserRole[] {
-    return ['teacher', 'hod'];
+    return ['teacher', 'hod', 'exam_cell', 'accounts', 'scholarship'];
   },
 
   getNoDuesIndependentDepartments(): UserRole[] {
@@ -325,49 +309,54 @@ export const clearanceWorkflow = {
     return [...this.getNoDuesIndependentDepartments(), ...this.getNoDuesSequentialDepartments()];
   },
 
-  // --- UPDATED: Accepts optional approvals list (from Backend) ---
+  // --- SMART APPROVAL LOGIC ---
   canApprove(
     requestId: string,
-    department: UserRole,
+    department: UserRole | string, // Updated to accept dynamic strings (Subject Names)
     type: ClearanceType,
-    existingApprovals?: ClearanceApproval[] // New Argument
+    existingApprovals?: ClearanceApproval[] 
   ): { canApprove: boolean; reason?: string } {
     
-    // Use the passed approvals list (fetched from DB) if available, 
-    // otherwise fallback to localStorage (legacy)
     const approvals = existingApprovals || storageService.getApprovalsByRequestId(requestId);
 
+    // ============================================
+    // HALL TICKET LOGIC (Strict Chronological Check)
+    // ============================================
     if (type === 'hall_ticket') {
       const departments = this.getHallTicketDepartments();
-      const currentIndex = departments.indexOf(department);
+      const currentIndex = departments.indexOf(department as UserRole);
 
+      // If department is not in the list at all
       if (currentIndex === -1) {
-        return { canApprove: false, reason: 'Department not in workflow' };
+        return { canApprove: false, reason: 'Your role is not part of the Hall Ticket workflow.' };
       }
 
+      // Step 1: Teacher (Always allowed to approve immediately)
       if (currentIndex === 0) {
         return { canApprove: true };
       }
 
+      // Steps 2-5: Must wait for the previous department to approve
       const previousDept = departments[currentIndex - 1];
       const previousApproval = approvals.find((a) => a.department === previousDept);
 
       if (!previousApproval || previousApproval.status !== 'approved') {
-        return { canApprove: false, reason: 'Previous department approval pending' };
+        const humanReadableName = this.getDepartmentLabel(previousDept);
+        return { canApprove: false, reason: `Waiting for ${humanReadableName} to approve first.` };
       }
 
+      // If previous step is approved, this step is unlocked
       return { canApprove: true };
     }
 
-    const independentDepts = this.getNoDuesIndependentDepartments();
+    // ============================================
+    // NO DUES LOGIC
+    // ============================================
     const sequentialDepts = this.getNoDuesSequentialDepartments();
 
-    if (independentDepts.includes(department)) {
-      return { canApprove: true };
-    }
-
-    if (sequentialDepts.includes(department)) {
-      const currentIndex = sequentialDepts.indexOf(department);
+    // 1. If the department is in the strictly sequential list, check chronological order
+    if (sequentialDepts.includes(department as UserRole)) {
+      const currentIndex = sequentialDepts.indexOf(department as UserRole);
 
       if (currentIndex === 0) {
         return { canApprove: true };
@@ -377,57 +366,36 @@ export const clearanceWorkflow = {
       const previousApproval = approvals.find((a) => a.department === previousDept);
 
       if (!previousApproval || previousApproval.status !== 'approved') {
-        return { canApprove: false, reason: 'Previous sequential department approval pending' };
+        const humanReadableName = this.getDepartmentLabel(previousDept);
+        return { canApprove: false, reason: `Waiting for ${humanReadableName} approval.` };
       }
 
       return { canApprove: true };
     }
 
-    return { canApprove: false, reason: 'Department not in workflow' };
+    // 2. If it is NOT sequential, it means it's an Independent Department, HOD, Exam Cell, or a Subject Teacher
+    // They are allowed to approve instantly without waiting.
+    return { canApprove: true };
   },
 
   updateRequestStatus(requestId: string): void {
-    // This function operates on localStorage. 
-    // In the new backend flow, status updates should be handled by the server.
-    const request = storageService.getRequestById(requestId);
-    if (!request) return;
-
-    const approvals = storageService.getApprovalsByRequestId(requestId);
-    const allDepartments = this.getAllDepartmentsForType(request.type);
-
-    const hasRejection = approvals.some((a) => a.status === 'rejected');
-    if (hasRejection) {
-      storageService.updateRequest(requestId, { status: 'rejected' });
-      return;
-    }
-
-    const allApproved = allDepartments.every((dept) => {
-      const approval = approvals.find((a) => a.department === dept);
-      return approval && approval.status === 'approved';
-    });
-
-    if (allApproved) {
-      storageService.updateRequest(requestId, {
-        status: 'approved',
-        completedAt: new Date().toISOString(),
-      });
-    }
+    // Server handles this automatically in node.js backend now
   },
 
-  getDepartmentLabel(role: UserRole): string {
-    const labels: Record<UserRole, string> = {
+  getDepartmentLabel(role: UserRole | string): string {
+    const labels: Record<string, string> = {
       student: 'Student',
-      teacher: 'Teacher',
+      teacher: 'Class Teacher', 
       hod: 'Head of Department',
       library: 'Library',
-      accounts: 'Accounts',
-      scholarship: 'Scholarship',
+      accounts: 'Accounts Section',
+      scholarship: 'Scholarship Section',
       student_section: 'Student Section',
       hostel_bus: 'Hostel/Bus',
       tpo: 'Training & Placement',
-      exam_cell: 'Exam Cell',
+      exam_cell: 'Exam Section',
       admin: 'Administrator',
     };
-    return labels[role] || role;
+    return labels[role] || role; // If it's a dynamic subject like "Data Structures", it returns the subject name directly
   },
 };

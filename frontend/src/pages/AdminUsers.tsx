@@ -64,20 +64,38 @@ export default function AdminUsers() {
 
   const loadUsers = async () => {
     try {
-      const allUsers = await apiService.getAllUsers();
-      setUsers(allUsers);
+      // ---> FIX: Fetch both collections simultaneously
+      const [allUsers, allStudents] = await Promise.all([
+        apiService.getAllUsers(),
+        apiService.getAllStudents()
+      ]);
+
+      // ---> FIX: Merge the department from the Student profile into the User account
+      const usersWithDepts = allUsers.map(user => {
+        if (user.role === 'student') {
+          const studentData = allStudents.find(s => s.userId === user.supabaseId || s.userId === user.id);
+          if (studentData && studentData.department) {
+            return { ...user, department: user.department || studentData.department };
+          }
+        }
+        return user;
+      });
+
+      setUsers(usersWithDepts);
     } catch (error) {
       console.error("Failed to load users", error);
       toast({ title: "Error", description: "Failed to load users from database.", variant: "destructive" });
     }
   };
 
-  const loadManagedDepartments = () => {
-    const savedDepts = localStorage.getItem('manage_departments');
-    if (savedDepts) {
-      setManagedDepartments(JSON.parse(savedDepts));
-    } else {
-      setManagedDepartments(["Computer Science", "Information Technology", "Mechanical"]);
+  const loadManagedDepartments = async () => {
+    try {
+      const depts = await apiService.getDepartments();
+      if (depts && depts.length > 0) {
+        setManagedDepartments(depts.map((d: any) => d.name || d));
+      }
+    } catch (error) {
+      console.error("Failed to load managed departments", error);
     }
   };
 
@@ -97,7 +115,8 @@ export default function AdminUsers() {
 
     if (selectedDepartment !== 'all') {
       if (selectedDepartment === 'none') {
-        filtered = filtered.filter((user) => !user.department);
+        // Exclude students from "No Department" filter
+        filtered = filtered.filter((user) => !user.department && user.role !== 'student');
       } else {
         filtered = filtered.filter((user) => user.department === selectedDepartment);
       }
@@ -202,13 +221,12 @@ export default function AdminUsers() {
     }
   };
 
-  // --- FIXED: GENERATE MOCK ACTIVITIES TO SHOW 'ACTIVE' STATUS ---
   const generateMockActivities = (userList: User[]) => {
     return userList.map(user => ({
       userId: user.id,
-      accountStatus: 'active', // Force "Active"
-      totalLogins: 1, // Assume at least 1 login
-      lastLogin: new Date().toISOString(), // Mock "Just Now"
+      accountStatus: 'active', 
+      totalLogins: 1, 
+      lastLogin: new Date().toISOString(), 
       lastLogout: undefined,
       sessions: []
     }));
@@ -220,9 +238,7 @@ export default function AdminUsers() {
       return;
     }
     try {
-      // Pass mock activities so the PDF generator sees "Active"
       const mockActivities = generateMockActivities(users);
-
       await generateUserReportPDF({
         users: users,
         activities: mockActivities as any,
@@ -237,13 +253,9 @@ export default function AdminUsers() {
 
   const handleGenerateAdvancedReport = async (reportType: ReportType, filters: ReportFilters) => {
     try {
-      // 1. Fetch Students data
       const students = await apiService.getAllStudents();
-
-      // 2. Generate mock activities
       const mockActivities = generateMockActivities(users);
 
-      // 3. Pass data to generator
       await generateAdvancedUserReport({
         reportType,
         users,
@@ -268,8 +280,8 @@ export default function AdminUsers() {
     }
   };
 
-  const getUsersByDepartment = (department: string) => filteredUsers.filter((user) => user.department === department);
-  const getUsersWithoutDepartment = () => filteredUsers.filter((user) => !user.department);
+  // Exclude students from "No Department" tab list
+  const getUsersWithoutDepartment = () => filteredUsers.filter((user) => !user.department && user.role !== 'student');
 
   const renderUserCard = (user: User) => (
     <div key={user.id} className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-4 border border-border rounded-lg hover:bg-accent/50 transition-colors">
@@ -367,12 +379,14 @@ export default function AdminUsers() {
 
         {selectedDepartment === 'all' ? (
           <Tabs defaultValue="all" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4">
-              <TabsTrigger value="all">All Users</TabsTrigger>
-              <TabsTrigger value="by-department">By Department</TabsTrigger>
-              <TabsTrigger value="no-department">No Department</TabsTrigger>
-              <TabsTrigger value="admins">Administrators</TabsTrigger>
+            <TabsList className="grid w-full grid-cols-2 lg:grid-cols-5 h-auto lg:h-12 gap-2 lg:gap-0 bg-transparent lg:bg-muted p-1">
+              <TabsTrigger value="all" className="h-10 data-[state=active]:shadow-sm">All Users</TabsTrigger>
+              <TabsTrigger value="students-dept" className="h-10 data-[state=active]:shadow-sm">Students (Dept)</TabsTrigger>
+              <TabsTrigger value="staff-dept" className="h-10 data-[state=active]:shadow-sm">Staff (Dept)</TabsTrigger>
+              <TabsTrigger value="no-department" className="h-10 data-[state=active]:shadow-sm">No Dept</TabsTrigger>
+              <TabsTrigger value="admins" className="h-10 data-[state=active]:shadow-sm">Admins</TabsTrigger>
             </TabsList>
+            
             <TabsContent value="all">
               <Card>
                 <CardHeader><CardTitle>All Users ({filteredUsers.length})</CardTitle></CardHeader>
@@ -381,18 +395,68 @@ export default function AdminUsers() {
                 </CardContent>
               </Card>
             </TabsContent>
-            <TabsContent value="by-department">
+
+            <TabsContent value="students-dept">
               <div className="space-y-6">
-                {activeDepartments.length === 0 ? <Card><CardContent className="text-center py-12"><p className="text-muted-foreground">No departments found</p></CardContent></Card> : activeDepartments.map((dept) => {
-                  const deptUsers = getUsersByDepartment(dept);
-                  if (deptUsers.length === 0) return null;
-                  return <Card key={dept}><CardHeader><CardTitle>{dept}</CardTitle><CardDescription>{deptUsers.length} users</CardDescription></CardHeader><CardContent><div className="space-y-4">{deptUsers.map(renderUserCard)}</div></CardContent></Card>
-                })}
+                {activeDepartments.length === 0 ? (
+                  <Card><CardContent className="text-center py-12"><p className="text-muted-foreground">No departments found</p></CardContent></Card>
+                ) : (
+                  activeDepartments.map((dept) => {
+                    const deptStudents = filteredUsers.filter(u => u.department === dept && u.role === 'student');
+                    if (deptStudents.length === 0) return null;
+                    return (
+                      <Card key={`student-${dept}`}>
+                        <CardHeader className="bg-secondary/10 border-b border-border/50 pb-4">
+                          <CardTitle className="text-lg text-secondary-foreground flex items-center gap-2">
+                            <Users className="h-5 w-5" /> {dept}
+                          </CardTitle>
+                          <CardDescription>{deptStudents.length} Student{deptStudents.length !== 1 ? 's' : ''}</CardDescription>
+                        </CardHeader>
+                        <CardContent className="pt-6">
+                          <div className="space-y-4">{deptStudents.map(renderUserCard)}</div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })
+                )}
               </div>
             </TabsContent>
-            <TabsContent value="no-department">
-                <Card><CardHeader><CardTitle>Users Without Department</CardTitle></CardHeader><CardContent>{getUsersWithoutDepartment().length === 0 ? <div className="text-center py-12"><p className="text-muted-foreground">All users assigned</p></div> : <div className="space-y-4">{getUsersWithoutDepartment().map(renderUserCard)}</div>}</CardContent></Card>
+
+            <TabsContent value="staff-dept">
+              <div className="space-y-6">
+                {activeDepartments.length === 0 ? (
+                  <Card><CardContent className="text-center py-12"><p className="text-muted-foreground">No departments found</p></CardContent></Card>
+                ) : (
+                  activeDepartments.map((dept) => {
+                    const deptStaff = filteredUsers.filter(u => u.department === dept && u.role !== 'student' && u.role !== 'admin');
+                    if (deptStaff.length === 0) return null;
+                    return (
+                      <Card key={`staff-${dept}`}>
+                        <CardHeader className="bg-primary/5 border-b border-border/50 pb-4">
+                          <CardTitle className="text-lg text-primary flex items-center gap-2">
+                            <ShieldAlert className="h-5 w-5" /> {dept}
+                          </CardTitle>
+                          <CardDescription>{deptStaff.length} Staff Member{deptStaff.length !== 1 ? 's' : ''}</CardDescription>
+                        </CardHeader>
+                        <CardContent className="pt-6">
+                          <div className="space-y-4">{deptStaff.map(renderUserCard)}</div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })
+                )}
+              </div>
             </TabsContent>
+
+            <TabsContent value="no-department">
+                <Card>
+                  <CardHeader><CardTitle>Users Without Department</CardTitle></CardHeader>
+                  <CardContent>
+                    {getUsersWithoutDepartment().length === 0 ? <div className="text-center py-12"><p className="text-muted-foreground">All staff assigned</p></div> : <div className="space-y-4">{getUsersWithoutDepartment().map(renderUserCard)}</div>}
+                  </CardContent>
+                </Card>
+            </TabsContent>
+            
             <TabsContent value="admins">
               <Card><CardHeader><CardTitle>Administrators</CardTitle></CardHeader><CardContent><div className="space-y-4">{filteredUsers.filter((u) => u.role === 'admin').map(renderUserCard)}</div></CardContent></Card>
             </TabsContent>
@@ -400,7 +464,9 @@ export default function AdminUsers() {
         ) : (
           <Card>
             <CardHeader><CardTitle>{selectedDepartment === 'none' ? 'Users Without Department' : `${selectedDepartment} Department`}</CardTitle></CardHeader>
-            <CardContent><div className="space-y-4">{filteredUsers.map(renderUserCard)}</div></CardContent>
+            <CardContent>
+              {filteredUsers.length === 0 ? <div className="text-center py-12"><p className="text-muted-foreground">No users found</p></div> : <div className="space-y-4">{filteredUsers.map(renderUserCard)}</div>}
+            </CardContent>
           </Card>
         )}
       </div>

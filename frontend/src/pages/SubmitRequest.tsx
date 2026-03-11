@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -10,102 +10,126 @@ import { clearanceWorkflow } from '@/services/storage';
 import { apiService } from '@/services/api';
 import { supabase } from '@/lib/supabase';
 import { useSupabaseUpload } from '@/hooks/use-supabase-upload';
-import type { ClearanceType, ClearanceRequest, ClearanceApproval } from '@/types';
+import type { ClearanceType, ClearanceRequest, ClearanceApproval, User } from '@/types';
 import { 
   FileText, 
   Loader2, 
   CheckCircle2, 
   ClipboardCheck, 
-  User, 
+  User as UserIcon, 
   Hash,
   UploadCloud,
   X
 } from 'lucide-react';
 
-const NOC_SUBJECTS = [
-  { name: "Linear Integrated Circuits", faculty: "Mr. S. A. Shinde" },
-  { name: "Consumer Electronics", faculty: "Mrs. R. S. Ghat" },
-  { name: "Microcontroller And Applications", faculty: "Miss. A. A. Gajare" },
-  { name: "Basic Power Electronics", faculty: "Mr. S. A. Shinde" },
-  { name: "Digital Communication Systems", faculty: "Miss. R. S. Ladage" },
-  { name: "Maintenance of Electronics Equipment and EDA Tools Practices", faculty: "Miss. A. A. Gajare" }
-];
-
 export default function SubmitRequest() {
-  const [clearanceType, setClearanceType] = useState<ClearanceType | 'noc_submission'>('hall_ticket');
+  const [clearanceType, setClearanceType] = useState<ClearanceType>('hall_ticket');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  // --- Dynamic Teachers State ---
+  const [departmentTeachers, setDepartmentTeachers] = useState<User[]>([]);
+  const [isLoadingTeachers, setIsLoadingTeachers] = useState(false);
+
   const { student } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // --- CONFIG: Define Upload Path ---
-  // Organizing by student ID prevents filename collisions between users
   const uploadPath = student ? `requests/${student.id}` : 'requests/guest';
 
-  // --- SUPABASE FILE UPLOAD HOOK ---
   const { 
-    files, 
-    setFiles, 
-    onUpload, 
-    getRootProps, 
-    getInputProps, 
-    isDragActive,
-    loading: isUploading
+    files, setFiles, onUpload, getRootProps, getInputProps, isDragActive, loading: isUploading
   } = useSupabaseUpload({
-    supabase,
-    bucketName: 'documents',
-    path: uploadPath, // <--- ADDED PATH
-    maxFiles: 1,
-    allowedMimeTypes: ['application/pdf', 'image/png', 'image/jpeg'],
+    supabase, bucketName: 'documents', path: uploadPath, maxFiles: 1, allowedMimeTypes: ['application/pdf', 'image/png', 'image/jpeg'],
   });
+
+  // Get local profile overrides if the student changed them in the dashboard
+  const savedProfileStr = student ? localStorage.getItem(`student_profile_${student.id}`) : null;
+  const localProfile = savedProfileStr ? JSON.parse(savedProfileStr) : null;
+  
+  const displayYear = localProfile?.year || student?.year;
+  const displayName = localProfile?.name || student?.name;
+
+  // --- Fetch Dynamic Teachers based on Student's Dept & Updated Year ---
+  useEffect(() => {
+    if (student) {
+      setIsLoadingTeachers(true);
+      apiService.getAllUsers()
+        .then((users: User[]) => {
+          const matchingTeachers = users.filter((u) => 
+            u.role === 'teacher' &&
+            u.department?.trim().toLowerCase() === student.department.trim().toLowerCase() &&
+            String(u.year) === String(displayYear)
+          );
+          setDepartmentTeachers(matchingTeachers);
+        })
+        .catch(err => console.error("Failed to fetch teachers", err))
+        .finally(() => setIsLoadingTeachers(false));
+    }
+  }, [student, displayYear]);
 
   if (!student) return <div className="min-h-screen flex items-center justify-center text-muted-foreground">Loading student profile...</div>;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (clearanceType === 'no_dues' && departmentTeachers.length === 0) {
+      toast({
+        title: 'Submission Blocked',
+        description: `No faculty members found for ${student.department} (Year ${displayYear}). Please contact your HOD.`,
+        variant: 'destructive'
+      });
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
-      // 1. Upload File (if exists)
       let uploadedUrl = '';
       if (files.length > 0) {
         await onUpload();
-        
-        // Construct the full path to get the correct URL
         const filePath = `${uploadPath}/${files[0].name}`;
-        
-        const { data } = supabase.storage
-          .from('documents')
-          .getPublicUrl(filePath);
-          
+        const { data } = supabase.storage.from('documents').getPublicUrl(filePath);
         uploadedUrl = data.publicUrl;
       }
 
-      // 2. Prepare Request Data
       const requestId = `req_${Date.now()}`;
       const newRequest: ClearanceRequest = {
         id: requestId,
         studentId: student.id,
-        type: (clearanceType === 'noc_submission' ? 'no_dues' : clearanceType) as ClearanceType,
+        type: clearanceType,
         status: 'pending',
         submittedAt: new Date().toISOString(),
-        pdfUrl: uploadedUrl, // Save the URL
+        pdfUrl: uploadedUrl,
       };
 
-      // 3. Prepare Approval Data
       let approvals: ClearanceApproval[] = [];
 
-      if (clearanceType === 'noc_submission') {
-        approvals = NOC_SUBJECTS.map((sub, index) => ({
-          id: `approval_${requestId}_${index}`,
+      // NO DUES: Assign to Subject Teachers AND HOD, Accounts, Scholarship, Exam Cell
+      if (clearanceType === 'no_dues') {
+        const teacherApprovals = departmentTeachers.map((teacher, index) => ({
+          id: `approval_${requestId}_teacher_${index}`,
           requestId,
-          department: sub.name as any, 
+          department: (teacher.subject || 'General Subject') as any, // Store Subject as Department Name
           status: 'pending',
           createdAt: new Date().toISOString(),
-          assignedTo: sub.faculty, 
+          assignedTo: teacher.name,
         }));
-      } else {
-        const departments = clearanceWorkflow.getAllDepartmentsForType(clearanceType as ClearanceType);
+
+        const institutionalDepts = ['hod', 'accounts', 'scholarship', 'exam_cell'];
+        const institutionalApprovals = institutionalDepts.map((dept, index) => ({
+          id: `approval_${requestId}_dept_${index}`,
+          requestId,
+          department: dept as any,
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+          assignedTo: '', // Unassigned, so any staff in this role can approve
+        }));
+
+        approvals = [...teacherApprovals, ...institutionalApprovals];
+      } 
+      // HALL TICKET logic remains the same
+      else {
+        const departments = clearanceWorkflow.getAllDepartmentsForType(clearanceType);
         approvals = departments.map((dept) => ({
           id: `approval_${Date.now()}_${dept}`,
           requestId,
@@ -115,7 +139,6 @@ export default function SubmitRequest() {
         }));
       }
 
-      // 4. Send to Backend
       await apiService.createRequest({ request: newRequest, approvals });
 
       toast({ 
@@ -125,7 +148,6 @@ export default function SubmitRequest() {
       
       setTimeout(() => navigate('/track-status'), 1000);
     } catch (error) {
-      console.error(error);
       toast({ 
         title: 'Submission Failed', 
         description: 'Please check your connection and try again.',
@@ -137,8 +159,6 @@ export default function SubmitRequest() {
   };
 
   const hallTicketDepts = clearanceWorkflow.getHallTicketDepartments();
-  const noDuesIndependent = clearanceWorkflow.getNoDuesIndependentDepartments();
-  const noDuesSequential = clearanceWorkflow.getNoDuesSequentialDepartments();
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -161,12 +181,12 @@ export default function SubmitRequest() {
                   {/* Student Info */}
                   <div className="bg-muted/50 p-4 rounded-lg border border-border space-y-3">
                     <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                      <User className="h-4 w-4" /> Student Information
+                      <UserIcon className="h-4 w-4" /> Student Information
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <Label className="text-xs text-muted-foreground">Full Name</Label>
-                        <p className="font-medium text-sm">{student.name}</p>
+                        <p className="font-medium text-sm">{displayName}</p>
                       </div>
                       <div className="space-y-1">
                         <Label className="text-xs text-muted-foreground">College ID / Roll No.</Label>
@@ -174,19 +194,23 @@ export default function SubmitRequest() {
                           <Hash className="h-3 w-3" /> {student.collegeId}
                         </p>
                       </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Department & Year</Label>
+                        <p className="font-medium text-sm">{student.department} (Year {displayYear})</p>
+                      </div>
                     </div>
                   </div>
 
                   {/* Type Selection */}
                   <div className="space-y-4">
                     <Label className="text-base font-semibold">Select Clearance Type</Label>
-                    <RadioGroup value={clearanceType} onValueChange={(v) => setClearanceType(v as any)} className="grid gap-4">
+                    <RadioGroup value={clearanceType} onValueChange={(v) => setClearanceType(v as ClearanceType)} className="grid gap-4">
                       
-                      <div className={`flex items-start space-x-3 p-4 border rounded-lg cursor-pointer transition-all ${clearanceType === 'noc_submission' ? 'bg-primary/5 border-primary ring-1 ring-primary' : 'hover:bg-accent/50'}`}>
-                        <RadioGroupItem value="noc_submission" id="noc_submission" className="mt-1" />
-                        <Label htmlFor="noc_submission" className="cursor-pointer w-full">
-                          <div className="font-semibold text-primary">(NOC-FORM) - For Submission</div>
-                          <p className="text-xs text-muted-foreground mt-1">Subject-wise clearance for Manuals & Micro-projects.</p>
+                      <div className={`flex items-start space-x-3 p-4 border rounded-lg cursor-pointer transition-all ${clearanceType === 'no_dues' ? 'bg-primary/5 border-primary ring-1 ring-primary' : 'hover:bg-accent/50'}`}>
+                        <RadioGroupItem value="no_dues" id="no_dues" className="mt-1" />
+                        <Label htmlFor="no_dues" className="cursor-pointer w-full">
+                          <div className="font-semibold text-primary">No Dues Certificate (Full Clearance)</div>
+                          <p className="text-xs text-muted-foreground mt-1">Requires approval from Subject Teachers, HOD, Accounts, Scholarship, and Exam Cell.</p>
                         </Label>
                       </div>
 
@@ -194,17 +218,10 @@ export default function SubmitRequest() {
                         <RadioGroupItem value="hall_ticket" id="hall_ticket" className="mt-1" />
                         <Label htmlFor="hall_ticket" className="cursor-pointer w-full">
                           <div className="font-semibold">Hall Ticket Clearance</div>
-                          <p className="text-xs text-muted-foreground mt-1">Standard exam hall ticket approval process.</p>
+                          <p className="text-xs text-muted-foreground mt-1">Standard exam hall ticket approval process from departments.</p>
                         </Label>
                       </div>
 
-                      <div className={`flex items-start space-x-3 p-4 border rounded-lg cursor-pointer transition-all ${clearanceType === 'no_dues' ? 'bg-primary/5 border-primary ring-1 ring-primary' : 'hover:bg-accent/50'}`}>
-                        <RadioGroupItem value="no_dues" id="no_dues" className="mt-1" />
-                        <Label htmlFor="no_dues" className="cursor-pointer w-full">
-                          <div className="font-semibold">No-Dues Clearance</div>
-                          <p className="text-xs text-muted-foreground mt-1">Final institutional clearance for graduation.</p>
-                        </Label>
-                      </div>
                     </RadioGroup>
                   </div>
 
@@ -233,13 +250,8 @@ export default function SubmitRequest() {
                                <FileText className="h-4 w-4" /> {file.name}
                             </span>
                             <Button 
-                              type="button" 
-                              variant="ghost" 
-                              size="sm" 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setFiles([]);
-                              }}
+                              type="button" variant="ghost" size="sm" 
+                              onClick={(e) => { e.stopPropagation(); setFiles([]); }}
                             >
                               <X className="h-4 w-4" />
                             </Button>
@@ -263,19 +275,47 @@ export default function SubmitRequest() {
 
           {/* Workflow Sidebar */}
           <div className="space-y-6">
-            {clearanceType === 'noc_submission' && (
+            {clearanceType === 'no_dues' && (
               <Card className="border-primary/50 bg-primary/5 shadow-sm">
-                <CardHeader><CardTitle className="text-base flex items-center gap-2"><ClipboardCheck className="h-4 w-4" /> NOC Subject List</CardTitle></CardHeader>
+                <CardHeader><CardTitle className="text-base flex items-center gap-2"><ClipboardCheck className="h-4 w-4" /> Clearance Steps</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
-                  {NOC_SUBJECTS.map((sub, index) => (
-                    <div key={index} className="flex items-start gap-2 text-xs">
-                      <CheckCircle2 className="h-3 w-3 text-primary mt-1 flex-shrink-0" />
-                      <div>
-                        <p className="font-medium text-foreground">{sub.name}</p>
-                        <p className="text-muted-foreground text-[10px]">{sub.faculty}</p>
-                      </div>
+                  {isLoadingTeachers ? (
+                    <div className="flex items-center text-sm text-muted-foreground">
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading steps...
                     </div>
-                  ))}
+                  ) : departmentTeachers.length > 0 ? (
+                    <>
+                      {/* Subject Teachers */}
+                      <div className="space-y-3">
+                        <p className="text-[10px] font-bold uppercase text-muted-foreground">1. Subject Clearances (Year {displayYear})</p>
+                        {departmentTeachers.map((teacher, index) => (
+                          <div key={teacher.id || index} className="flex items-start gap-2 text-xs">
+                            <CheckCircle2 className="h-3 w-3 text-primary mt-1 flex-shrink-0" />
+                            <div>
+                              <p className="font-medium text-foreground">{teacher.subject || 'General Subject'}</p>
+                              <p className="text-muted-foreground text-[10px]">{teacher.name}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Institutional Clearances */}
+                      <div className="pt-3 border-t space-y-3 mt-3">
+                        <p className="text-[10px] font-bold uppercase text-muted-foreground">2. Institutional Clearances</p>
+                        {['HOD', 'Accounts', 'Scholarship', 'Exam Cell'].map((dept, index) => (
+                          <div key={`inst-${index}`} className="flex items-start gap-2 text-xs">
+                            <CheckCircle2 className="h-3 w-3 text-primary mt-1 flex-shrink-0" />
+                            <div>
+                              <p className="font-medium text-foreground">{dept}</p>
+                              <p className="text-muted-foreground text-[10px]">Department Approval</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-xs text-destructive">No faculty found for your department and year. Clearance cannot be requested.</p>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -293,36 +333,6 @@ export default function SubmitRequest() {
                       <p className="text-sm pt-0.5">{clearanceWorkflow.getDepartmentLabel(dept)}</p>
                     </div>
                   ))}
-                </CardContent>
-              </Card>
-            )}
-
-            {clearanceType === 'no_dues' && (
-              <Card className="shadow-sm">
-                <CardHeader><CardTitle className="text-base font-bold text-foreground">No-Dues Workflow</CardTitle></CardHeader>
-                <CardContent className="space-y-4">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase text-muted-foreground mb-2">Independent Processing</p>
-                    <div className="space-y-2">
-                      {noDuesIndependent.map((dept) => (
-                        <div key={dept} className="flex items-center gap-2 text-sm">
-                          <CheckCircle2 className="h-4 w-4 text-green-500" />
-                          <span>{clearanceWorkflow.getDepartmentLabel(dept)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="pt-4 border-t">
-                    <p className="text-[10px] font-bold uppercase text-muted-foreground mb-2">Sequential Steps</p>
-                    <div className="space-y-3">
-                      {noDuesSequential.map((dept, index) => (
-                        <div key={dept} className="flex items-start gap-3">
-                          <div className="w-5 h-5 rounded-full bg-secondary text-secondary-foreground flex items-center justify-center text-[10px] font-bold">{index + 1}</div>
-                          <p className="text-xs pt-0.5 font-medium">{clearanceWorkflow.getDepartmentLabel(dept)}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
                 </CardContent>
               </Card>
             )}

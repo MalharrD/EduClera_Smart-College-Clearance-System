@@ -8,8 +8,10 @@ const app = express();
 // --- CONFIGURATION ---
 const allowedOrigins = [
   'http://localhost:5173',
+  'http://localhost:5174',
   'http://localhost:3000',
   'https://educlera.onrender.com', 
+  'https://educlera-smart-college-clearance-system.onrender.com',
   process.env.FRONTEND_URL
 ];
 
@@ -70,6 +72,8 @@ const UserSchema = new mongoose.Schema({
   department: String,
   birthDate: String,
   joiningDate: String,
+  year: String,
+  subject: String,
   createdAt: { type: Date, default: Date.now }
 });
 UserSchema.set('toJSON', toJSONConfig);
@@ -111,18 +115,24 @@ const ApprovalSchema = new mongoose.Schema({
 });
 ApprovalSchema.set('toJSON', toJSONConfig);
 
+// ---> NEW DEPARTMENT SCHEMA <---
+const DepartmentSchema = new mongoose.Schema({
+  name: { type: String, required: true, unique: true },
+  createdAt: { type: Date, default: Date.now }
+});
+DepartmentSchema.set('toJSON', toJSONConfig);
+
 const User = mongoose.model('User', UserSchema);
 const Student = mongoose.model('Student', StudentSchema);
 const Request = mongoose.model('Request', RequestSchema);
 const Approval = mongoose.model('Approval', ApprovalSchema);
+const Department = mongoose.model('Department', DepartmentSchema); // NEW
 
 // --- ROUTES ---
 
 // ==========================================
-// 1. AUTH ROUTES (Matched to Frontend)
+// 1. AUTH ROUTES
 // ==========================================
-
-// Resolve Enrollment ID to Email
 app.post('/api/auth/resolve-enrollment', async (req, res) => {
   try {
     const { enrollmentNumber } = req.body;
@@ -136,13 +146,10 @@ app.post('/api/auth/resolve-enrollment', async (req, res) => {
 
     res.json({ email: user.email });
   } catch (err) {
-    console.error("Resolve Error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Sync User (Supabase -> MongoDB)
-// Matches frontend call: /api/auth/sync-user
 app.post('/api/auth/sync-user', async (req, res) => {
   try {
     const { supabaseId, ...userData } = req.body;
@@ -155,9 +162,6 @@ app.post('/api/auth/sync-user', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Get User Profile (User + Student Data)
-// Matches frontend call: /api/auth/profile/:userId
-// --- FIXES THE 404 ERROR ---
 app.get('/api/auth/profile/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -173,11 +177,8 @@ app.get('/api/auth/profile/:userId', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Create Student Profile
-// Matches frontend call: /api/auth/student-profile
 app.post('/api/auth/student-profile', async (req, res) => {
   try {
-    // Check for existing enrollment ID
     const existing = await Student.findOne({ enrollmentNumber: req.body.enrollmentNumber });
     if (existing) {
        return res.status(400).json({ error: 'Enrollment Number already exists' });
@@ -187,12 +188,38 @@ app.post('/api/auth/student-profile', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
 // ==========================================
-// 2. EXISTING RESOURCE ROUTES
+// 2. RESOURCE ROUTES
 // ==========================================
 
-// Users
+// --- NEW DEPARTMENT ROUTES ---
+app.get('/api/departments', async (req, res) => {
+  try {
+    const departments = await Department.find().sort({ name: 1 });
+    res.json(departments);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/departments', async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+    const existing = await Department.findOne({ name });
+    if (existing) return res.status(400).json({ error: 'Department already exists' });
+    const dept = await Department.create({ name });
+    res.json(dept);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/departments/:name', async (req, res) => {
+  try {
+    const dept = await Department.findOneAndDelete({ name: req.params.name });
+    if (!dept) return res.status(404).json({ error: 'Department not found' });
+    res.json({ message: 'Deleted successfully' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+// -----------------------------
+
 app.get('/api/users', async (req, res) => {
   try {
     const users = await User.find().sort({ createdAt: -1 });
@@ -200,16 +227,12 @@ app.get('/api/users', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Kept for backward compatibility
 app.get('/api/users/:supabaseId', async (req, res) => {
   try {
     const user = await User.findOne({ supabaseId: req.params.supabaseId });
     if (!user) return res.status(404).json({ error: 'User not found' });
-    
     let studentData = null;
-    if (user.role === 'student') {
-      studentData = await Student.findOne({ userId: user.supabaseId });
-    }
+    if (user.role === 'student') studentData = await Student.findOne({ userId: user.supabaseId });
     res.json({ user, student: studentData });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -227,13 +250,11 @@ app.delete('/api/users/:id', async (req, res) => {
     const query = mongoose.isValidObjectId(req.params.id) ? { _id: req.params.id } : { id: req.params.id };
     const user = await User.findOneAndDelete(query);
     if (!user) return res.status(404).json({ error: 'User not found' });
-    
     if (user.role === 'student') await Student.findOneAndDelete({ userId: user.supabaseId });
     res.json({ message: 'User deleted' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Students
 app.get('/api/students', async (req, res) => {
   try {
     const students = await Student.find();
@@ -241,7 +262,6 @@ app.get('/api/students', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Requests
 app.post('/api/requests', async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -275,7 +295,6 @@ app.get('/api/requests/student/:studentId', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Approvals
 app.get('/api/approvals', async (req, res) => {
   try {
     const { role, name, requestId } = req.query;

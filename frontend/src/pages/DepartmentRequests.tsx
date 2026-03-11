@@ -43,13 +43,11 @@ export default function DepartmentRequests() {
   const loadData = async () => {
     if (!user) return;
     try {
-      // 1. Fetch tasks assigned specifically to this staff
       const myTasks = await apiService.getStaffApprovals(user.role, user.name);
       setMyApprovals(myTasks);
 
       if (myTasks.length === 0) return;
 
-      // 2. Fetch all Requests & Students to lookup details
       const [allReqs, allStuds] = await Promise.all([
         apiService.getAllRequests(),
         apiService.getAllStudents()
@@ -67,7 +65,6 @@ export default function DepartmentRequests() {
       });
       setStudentsMap(studMap);
 
-      // 3. Fetch full approval history
       const distinctRequestIds = [...new Set(myTasks.map((t: ClearanceApproval) => t.requestId))];
       
       if (distinctRequestIds.length > 0) {
@@ -130,7 +127,9 @@ export default function DepartmentRequests() {
       await apiService.updateApproval(selectedApproval.id, {
         status: actionType === 'approve' ? 'approved' : 'rejected',
         remarks: remarks.trim() || undefined,
-        approvedBy: user.id,
+        
+        // ---> FIX: SAVING THE ACTUAL NAME OF THE APPROVER <---
+        approvedBy: user.name, 
       });
 
       toast({
@@ -232,7 +231,6 @@ export default function DepartmentRequests() {
                                 Submitted on {new Date(request.submittedAt).toLocaleString()}
                               </div>
 
-                              {/* --- DOCUMENT VIEWER BUTTON --- */}
                               {request.pdfUrl && (
                                 <div className="mt-3">
                                    <a 

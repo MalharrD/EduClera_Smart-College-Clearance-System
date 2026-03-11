@@ -7,17 +7,21 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { GraduationCap, Loader2, ShieldCheck, Mail, Smartphone, ArrowLeft, UserCircle } from 'lucide-react';
-import { apiService } from '@/services/api'; // Import API service
+import { GraduationCap, Loader2, ShieldCheck, Mail, Smartphone, ArrowLeft, UserCircle, Eye, EyeOff } from 'lucide-react';
+import { apiService } from '@/services/api'; 
 
 type ViewState = 'login' | 'forgot-password' | 'verify-otp' | 'reset-password';
 
 export default function Login() {
   const [view, setView] = useState<ViewState>('login');
-  // Renamed to 'identifier' to reflect it can be ID or Email
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  // --- Password Visibility States ---
+  const [showPassword, setShowPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
 
   // --- Forgot Password State ---
   const [recoveryMethod, setRecoveryMethod] = useState<'email' | 'mobile'>('email');
@@ -79,7 +83,7 @@ export default function Login() {
     }, 1500);
   };
 
-  // --- LOGIN HANDLER (UPDATED) ---
+  // --- LOGIN HANDLER ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -97,9 +101,7 @@ export default function Login() {
     try {
       let loginEmail = identifier.trim();
 
-      // Check if input is NOT an email (assuming it's an Enrollment ID)
       if (!loginEmail.includes('@')) {
-        // Resolve Enrollment ID to Email via Backend
         const result = await apiService.resolveEnrollment(loginEmail);
         
         if (!result || !result.email) {
@@ -108,10 +110,9 @@ export default function Login() {
         loginEmail = result.email;
       }
 
-      // Proceed with Login using the resolved Email
       const user = await login(loginEmail, password);
 
-      if (user.role !== 'student') {
+      if (user?.role !== 'student') {
         toast({
           title: 'Access Denied',
           description: 'This is the student portal. Please use Staff Login.',
@@ -122,7 +123,7 @@ export default function Login() {
 
       toast({
         title: 'Login Successful',
-        description: `Welcome back, ${user.name}!`,
+        description: `Welcome back, ${user?.name}!`,
       });
 
       navigate('/dashboard');
@@ -209,10 +210,9 @@ export default function Login() {
             </CardHeader>
             <CardContent>
 
-              {/* --- FORGOT PASSWORD VIEWS (Unchanged logic) --- */}
+              {/* --- FORGOT PASSWORD VIEWS --- */}
               {view === 'forgot-password' && (
                 <form onSubmit={handleSendOTP} className="space-y-6">
-                  {/* ... (Same as before) ... */}
                   <RadioGroup defaultValue="email" onValueChange={(v) => setRecoveryMethod(v as 'email' | 'mobile')} className="grid grid-cols-2 gap-4">
                     <div>
                       <RadioGroupItem value="email" id="email-opt" className="peer sr-only" />
@@ -247,13 +247,29 @@ export default function Login() {
 
               {view === 'reset-password' && (
                 <form onSubmit={handleResetPassword} className="space-y-4">
-                  <div className="space-y-2"><Label htmlFor="newPass">New Password</Label><Input id="newPass" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required /></div>
-                  <div className="space-y-2"><Label htmlFor="confPass">Confirm Password</Label><Input id="confPass" type="password" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} required /></div>
+                  <div className="space-y-2">
+                    <Label htmlFor="newPass">New Password</Label>
+                    <div className="relative">
+                      <Input id="newPass" type={showNewPassword ? "text" : "password"} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="pr-10" required />
+                      <button type="button" onClick={() => setShowNewPassword(!showNewPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                        {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="confPass">Confirm Password</Label>
+                    <div className="relative">
+                      <Input id="confPass" type={showConfirmNewPassword ? "text" : "password"} value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} className="pr-10" required />
+                      <button type="button" onClick={() => setShowConfirmNewPassword(!showConfirmNewPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                        {showConfirmNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
                   <Button type="submit" className="w-full" disabled={isLoading}>{isLoading ? "Updating..." : "Reset Password"}</Button>
                 </form>
               )}
 
-              {/* --- LOGIN VIEW (UPDATED) --- */}
+              {/* --- LOGIN VIEW --- */}
               {view === 'login' && (
                 <form onSubmit={handleSubmit} className="space-y-4">
                   <div className="space-y-2">
@@ -277,14 +293,20 @@ export default function Login() {
                       <Label htmlFor="password">Password</Label>
                       <Button variant="link" className="p-0 h-auto text-xs text-primary" type="button" onClick={() => setView('forgot-password')}>Forgot Password?</Button>
                     </div>
-                    <Input
-                      id="password"
-                      type="password"
-                      placeholder="Enter your password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      disabled={isLoading}
-                    />
+                    <div className="relative">
+                      <Input
+                        id="password"
+                        type={showPassword ? "text" : "password"}
+                        placeholder="Enter your password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        disabled={isLoading}
+                        className="pr-10"
+                      />
+                      <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" disabled={isLoading}>
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
                   </div>
 
                   <Button type="submit" className="w-full" disabled={isLoading}>

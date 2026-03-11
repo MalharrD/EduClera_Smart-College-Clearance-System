@@ -8,19 +8,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiService } from '@/services/api';
 import { clearanceWorkflow } from '@/services/storage';
-import type { ClearanceRequest, Student, ClearanceApproval } from '@/types';
+import type { ClearanceRequest, Student, ClearanceApproval, User } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import {
   Users, FileText, CheckCircle, XCircle, Clock, Search,
-  Shield, Camera, Pencil, Save, Mail, ShieldCheck,
+  Shield, Camera, Pencil, Save, Mail, ShieldCheck, GraduationCap, Trash2
 } from 'lucide-react';
 
 export default function HODDashboard() {
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
   const [requests, setRequests] = useState<ClearanceRequest[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [allApprovals, setAllApprovals] = useState<ClearanceApproval[]>([]);
+  
+  const [teachers, setTeachers] = useState<User[]>([]);
+  const [teacherYearFilter, setTeacherYearFilter] = useState('all');
   
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -37,20 +41,12 @@ export default function HODDashboard() {
 
   useEffect(() => {
     if (user) {
-        setProfile(prev => ({
-            ...prev,
-            name: user.name,
-            email: user.email,
-            department: user.department || "General"
-        }));
+        setProfile(prev => ({ ...prev, name: user.name, email: user.email, department: user.department || "General" }));
     }
   }, [user]);
 
   useEffect(() => {
-    if (user?.department) {
-        loadData(user.department);
-    }
-    
+    if (user?.department) loadData(user.department);
     if (user?.id) {
         const savedProfile = localStorage.getItem(`hod_profile_${user.id}`);
         if (savedProfile) {
@@ -64,21 +60,16 @@ export default function HODDashboard() {
     try {
       const [reqs, studs] = await Promise.all([
         apiService.getAllRequests(),
-        apiService.getAllStudents()
+        apiService.getAllStudents(),
       ]) as [ClearanceRequest[], Student[]];
 
-      // --- 1. FILTER STUDENTS BY DEPARTMENT ---
-      // Only keep students who belong to this HOD's department
-      const myStudents = studs.filter(s => s.department === myDepartment);
+      const myStudents = studs.filter(s => s?.department?.trim().toLowerCase() === myDepartment.trim().toLowerCase());
       setStudents(myStudents);
 
-      // --- 2. FILTER REQUESTS ---
-      // Only keep requests from those students
       const myStudentIds = new Set(myStudents.map(s => s.id));
       const myRequests = reqs.filter(r => myStudentIds.has(r.studentId));
       setRequests(myRequests);
 
-      // --- 3. FETCH APPROVALS ---
       if (myRequests.length > 0) {
         const approvalPromises = myRequests.map((req) => apiService.getApprovals(req.id));
         const approvalsList = await Promise.all(approvalPromises);
@@ -86,18 +77,24 @@ export default function HODDashboard() {
       } else {
         setAllApprovals([]);
       }
+
+      try {
+        const allUsers = await apiService.getAllUsers();
+        const myTeachers = allUsers.filter((u: User) => {
+          return u?.role === 'teacher' && 
+                 u?.department?.trim().toLowerCase() === myDepartment.trim().toLowerCase();
+        });
+        setTeachers(myTeachers);
+      } catch (userErr) {
+        console.error("Failed to fetch teachers", userErr);
+      }
+
     } catch (error) {
-      console.error("Failed to load HOD data", error);
-      toast({
-        title: "Data Load Error",
-        description: "Could not fetch dashboard data.",
-        variant: "destructive"
-      });
+      toast({ title: "Data Load Error", description: "Could not fetch dashboard data.", variant: "destructive" });
     }
   };
 
   const handleUploadClick = () => fileInputRef.current?.click();
-
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -113,19 +110,29 @@ export default function HODDashboard() {
     toast({ title: "Success", description: "Profile photo updated" });
   };
 
+  // --- NEW: DELETE TEACHER ---
+  const handleDeleteTeacher = async (teacherId: string) => {
+    if (!window.confirm("Are you sure you want to remove this teacher from the system?")) return;
+    try {
+      await apiService.deleteUser(teacherId);
+      setTeachers(prev => prev.filter(t => t.id !== teacherId && t.supabaseId !== teacherId));
+      toast({ title: 'Success', description: 'Teacher removed successfully.' });
+    } catch (error) {
+      toast({ title: 'Error', description: 'Failed to remove teacher.', variant: 'destructive' });
+    }
+  };
+
   const filteredRequests = requests.filter((request) => {
     const student = students.find((s) => s.id === request.studentId);
     if (!student) return false;
-
-    const matchesSearch =
-      !searchQuery ||
-      student.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      student.collegeId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      student.enrollmentNumber.toLowerCase().includes(searchQuery.toLowerCase());
-
+    const matchesSearch = !searchQuery || student.name.toLowerCase().includes(searchQuery.toLowerCase()) || student.collegeId.toLowerCase().includes(searchQuery.toLowerCase()) || student.enrollmentNumber.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus = filterStatus === 'all' || request.status === filterStatus;
-
     return matchesSearch && matchesStatus;
+  });
+
+  const filteredTeachers = teachers.filter(t => {
+    if (teacherYearFilter === 'all') return true;
+    return String(t.year) === String(teacherYearFilter);
   });
 
   const stats = {
@@ -159,16 +166,10 @@ export default function HODDashboard() {
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 mb-8">
-          {/* Profile Card */}
           <Card className="xl:col-span-1 shadow-md border-primary/10">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">My Profile</CardTitle>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                className="h-8 w-8 p-0"
-                onClick={() => isEditing ? handleSaveProfile() : setIsEditing(true)}
-              >
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => isEditing ? handleSaveProfile() : setIsEditing(true)}>
                 {isEditing ? <Save className="h-4 w-4 text-green-600" /> : <Pencil className="h-4 w-4" />}
               </Button>
             </CardHeader>
@@ -195,33 +196,28 @@ export default function HODDashboard() {
             </CardContent>
           </Card>
 
-          {/* Stats Cards */}
           <div className="xl:col-span-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-xs font-medium">Students</CardTitle>
-                <Users className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-xs font-medium">Students</CardTitle><Users className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent><div className="text-xl font-bold">{stats.totalStudents}</div></CardContent>
             </Card>
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-xs font-medium">Pending</CardTitle>
-                <Clock className="h-4 w-4 text-warning" />
+                <CardTitle className="text-xs font-medium">Pending</CardTitle><Clock className="h-4 w-4 text-warning" />
               </CardHeader>
               <CardContent><div className="text-xl font-bold">{stats.pending}</div></CardContent>
             </Card>
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-xs font-medium">Approved</CardTitle>
-                <CheckCircle className="h-4 w-4 text-success" />
+                <CardTitle className="text-xs font-medium">Approved</CardTitle><CheckCircle className="h-4 w-4 text-success" />
               </CardHeader>
               <CardContent><div className="text-xl font-bold">{stats.approved}</div></CardContent>
             </Card>
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-xs font-medium">Rejected</CardTitle>
-                <XCircle className="h-4 w-4 text-destructive" />
+                <CardTitle className="text-xs font-medium">Rejected</CardTitle><XCircle className="h-4 w-4 text-destructive" />
               </CardHeader>
               <CardContent><div className="text-xl font-bold">{stats.rejected}</div></CardContent>
             </Card>
@@ -229,9 +225,10 @@ export default function HODDashboard() {
         </div>
 
         <Tabs defaultValue="requests" className="space-y-6">
-          <TabsList>
-            <TabsTrigger value="requests">Department Requests</TabsTrigger>
-            <TabsTrigger value="students">Department Students</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-3 md:w-auto">
+            <TabsTrigger value="requests">Requests</TabsTrigger>
+            <TabsTrigger value="students">Students</TabsTrigger>
+            <TabsTrigger value="teachers">Teachers</TabsTrigger>
           </TabsList>
 
           <TabsContent value="requests" className="space-y-4">
@@ -318,19 +315,88 @@ export default function HODDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {students.map((student) => (
-                    <div key={student.id} className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-4 border rounded-lg">
-                      <div className="flex-1">
-                        <h3 className="font-semibold mb-2">{student.name}</h3>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm text-muted-foreground">
-                          <div><span className="font-medium">ID:</span> {student.collegeId}</div>
-                          <div><span className="font-medium">Enrollment:</span> {student.enrollmentNumber}</div>
-                          <div><span className="font-medium">Dept:</span> {student.department}</div>
-                          <div><span className="font-medium">Year:</span> {student.year}</div>
+                  {students.length === 0 ? (
+                    <div className="text-center py-12">
+                      <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                      <p className="text-muted-foreground">No students found.</p>
+                    </div>
+                  ) : (
+                    students.map((student) => (
+                      <div key={student.id} className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-4 border rounded-lg">
+                        <div className="flex-1">
+                          <h3 className="font-semibold mb-2">{student.name}</h3>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm text-muted-foreground">
+                            <div><span className="font-medium">ID:</span> {student.collegeId}</div>
+                            <div><span className="font-medium">Enrollment:</span> {student.enrollmentNumber}</div>
+                            <div><span className="font-medium">Dept:</span> {student.department}</div>
+                            <div><span className="font-medium">Year:</span> {student.year}</div>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    ))
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="teachers" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>{profile.department} Teachers</CardTitle>
+                <CardDescription>Manage academic staff in your department</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="mb-6 flex gap-4">
+                  <Select value={teacherYearFilter} onValueChange={setTeacherYearFilter}>
+                    <SelectTrigger className="w-full md:w-48"><SelectValue placeholder="Filter by Year" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Years</SelectItem>
+                      <SelectItem value="1">1st Year</SelectItem>
+                      <SelectItem value="2">2nd Year</SelectItem>
+                      <SelectItem value="3">3rd Year</SelectItem>
+                      <SelectItem value="4">4th Year</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-4">
+                  {filteredTeachers.length === 0 ? (
+                     <div className="text-center py-12">
+                     <GraduationCap className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                     <p className="text-muted-foreground">No teachers found for this criteria.</p>
+                   </div>
+                  ) : (
+                    filteredTeachers.map((teacher) => (
+                      <div key={teacher.id || teacher.email} className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-4 border rounded-lg">
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                               <h3 className="font-semibold text-lg">{teacher.name}</h3>
+                               <Badge variant="secondary">{teacher.year ? `Year ${teacher.year}` : 'N/A'}</Badge>
+                            </div>
+                            
+                            {/* DELETE BUTTON ADDED HERE */}
+                            <Button 
+                              variant="destructive" 
+                              size="sm" 
+                              className="h-8 shadow-sm"
+                              onClick={() => handleDeleteTeacher(teacher.id || teacher.supabaseId)}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" /> Remove
+                            </Button>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-muted-foreground mt-2">
+                            <div><span className="font-medium text-foreground">Email:</span> {teacher.email}</div>
+                            <div><span className="font-medium text-foreground">Subject:</span> {teacher.subject || 'Not Assigned'}</div>
+                            <div><span className="font-medium text-foreground">Username:</span> {teacher.username}</div>
+                            <div><span className="font-medium text-foreground">Joined:</span> {teacher.createdAt ? new Date(teacher.createdAt).toLocaleDateString() : 'N/A'}</div>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </CardContent>
             </Card>
