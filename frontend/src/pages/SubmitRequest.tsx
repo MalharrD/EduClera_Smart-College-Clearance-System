@@ -10,7 +10,7 @@ import { clearanceWorkflow } from '@/services/storage';
 import { apiService } from '@/services/api';
 import { supabase } from '@/lib/supabase';
 import { useSupabaseUpload } from '@/hooks/use-supabase-upload';
-import type { ClearanceType, ClearanceRequest, ClearanceApproval, User } from '@/types';
+import type { ClearanceType, ClearanceRequest, ClearanceApproval, User, TeachingAssignment } from '@/types';
 import { 
   FileText, 
   Loader2, 
@@ -23,10 +23,9 @@ import {
 } from 'lucide-react';
 
 export default function SubmitRequest() {
-  const [clearanceType, setClearanceType] = useState<ClearanceType>('hall_ticket');
+  const [clearanceType, setClearanceType] = useState<ClearanceType>('no_dues');
   const [isSubmitting, setIsSubmitting] = useState(false);
   
-  // --- Dynamic Teachers State ---
   const [departmentTeachers, setDepartmentTeachers] = useState<User[]>([]);
   const [isLoadingTeachers, setIsLoadingTeachers] = useState(false);
 
@@ -42,24 +41,59 @@ export default function SubmitRequest() {
     supabase, bucketName: 'documents', path: uploadPath, maxFiles: 1, allowedMimeTypes: ['application/pdf', 'image/png', 'image/jpeg'],
   });
 
-  // Get local profile overrides if the student changed them in the dashboard
   const savedProfileStr = student ? localStorage.getItem(`student_profile_${student.id}`) : null;
   const localProfile = savedProfileStr ? JSON.parse(savedProfileStr) : null;
   
-  const displayYear = localProfile?.year || student?.year;
+  const displayYear = localProfile?.year || student?.year || 1;
   const displayName = localProfile?.name || student?.name;
 
-  // --- Fetch Dynamic Teachers based on Student's Dept & Updated Year ---
   useEffect(() => {
     if (student) {
       setIsLoadingTeachers(true);
       apiService.getAllUsers()
         .then((users: User[]) => {
-          const matchingTeachers = users.filter((u) => 
-            u.role === 'teacher' &&
-            u.department?.trim().toLowerCase() === student.department.trim().toLowerCase() &&
-            String(u.year) === String(displayYear)
-          );
+          const studentDept = (student.department || '').trim().toLowerCase();
+          const studentYearNum = String(displayYear).replace(/\D/g, '') || "1"; 
+          
+          const matchingTeachers: User[] = [];
+          
+          users.forEach((u) => {
+            const teacherDept = (u.department || '').trim().toLowerCase();
+            
+            const isDeptMatch = teacherDept === studentDept || 
+              (teacherDept.length > 2 && studentDept.includes(teacherDept)) || 
+              (studentDept.length > 2 && teacherDept.includes(studentDept));
+            
+            if (u.role === 'teacher' && isDeptMatch) {
+              
+              let parsedAssignments: TeachingAssignment[] = [];
+
+              try {
+                if (u.teachingAssignments && Array.isArray(u.teachingAssignments) && u.teachingAssignments.length > 0) {
+                  parsedAssignments = u.teachingAssignments;
+                } else if (u.subject && typeof u.subject === 'string' && u.subject.trim().startsWith('[')) {
+                  parsedAssignments = JSON.parse(u.subject);
+                } else if (u.subject) {
+                  parsedAssignments = [{ subject: u.subject, year: Number(u.year) || 1 }];
+                }
+              } catch (e) {
+                parsedAssignments = [{ subject: String(u.subject || 'General Subject'), year: Number(u.year) || 1 }];
+              }
+
+              parsedAssignments.forEach((assignment, index) => {
+                const assignmentYearNum = String(assignment.year || 1).replace(/\D/g, '') || "1";
+                
+                if (assignmentYearNum === studentYearNum) {
+                  matchingTeachers.push({ 
+                    ...u, 
+                    subject: assignment.subject || 'General Subject',
+                    id: `${u.id}_${index}`
+                  });
+                }
+              });
+            }
+          });
+          
           setDepartmentTeachers(matchingTeachers);
         })
         .catch(err => console.error("Failed to fetch teachers", err))
@@ -75,7 +109,7 @@ export default function SubmitRequest() {
     if (clearanceType === 'no_dues' && departmentTeachers.length === 0) {
       toast({
         title: 'Submission Blocked',
-        description: `No faculty members found for ${student.department} (Year ${displayYear}). Please contact your HOD.`,
+        description: `No faculty found teaching Year ${displayYear} in "${student.department}". Please ensure a teacher is registered for this exact department and year.`,
         variant: 'destructive'
       });
       return;
@@ -104,31 +138,31 @@ export default function SubmitRequest() {
 
       let approvals: ClearanceApproval[] = [];
 
-      // NO DUES: Assign to Subject Teachers AND HOD, Accounts, Scholarship, Exam Cell
       if (clearanceType === 'no_dues') {
         const teacherApprovals = departmentTeachers.map((teacher, index) => ({
           id: `approval_${requestId}_teacher_${index}`,
           requestId,
-          department: (teacher.subject || 'General Subject') as any, // Store Subject as Department Name
+          department: (teacher.subject || 'General Subject') as any, 
           status: 'pending',
           createdAt: new Date().toISOString(),
-          assignedTo: teacher.name,
+          assignedTo: teacher.name, 
         }));
 
-        const institutionalDepts = ['hod', 'accounts', 'scholarship', 'exam_cell'];
+        const independentDepts = clearanceWorkflow.getNoDuesIndependentDepartments();
+        const sequentialDepts = clearanceWorkflow.getNoDuesSequentialDepartments();
+        const institutionalDepts = [...independentDepts, ...sequentialDepts];
+
         const institutionalApprovals = institutionalDepts.map((dept, index) => ({
           id: `approval_${requestId}_dept_${index}`,
           requestId,
           department: dept as any,
           status: 'pending',
           createdAt: new Date().toISOString(),
-          assignedTo: '', // Unassigned, so any staff in this role can approve
+          assignedTo: '', 
         }));
 
         approvals = [...teacherApprovals, ...institutionalApprovals];
-      } 
-      // HALL TICKET logic remains the same
-      else {
+      } else {
         const departments = clearanceWorkflow.getAllDepartmentsForType(clearanceType);
         approvals = departments.map((dept) => ({
           id: `approval_${Date.now()}_${dept}`,
@@ -141,24 +175,14 @@ export default function SubmitRequest() {
 
       await apiService.createRequest({ request: newRequest, approvals });
 
-      toast({ 
-        title: 'Request Submitted Successfully',
-        description: 'You can now track the progress of your clearance.' 
-      });
-      
+      toast({ title: 'Request Submitted Successfully', description: 'You can now track the progress of your clearance.' });
       setTimeout(() => navigate('/track-status'), 1000);
     } catch (error) {
-      toast({ 
-        title: 'Submission Failed', 
-        description: 'Please check your connection and try again.',
-        variant: 'destructive' 
-      });
+      toast({ title: 'Submission Failed', description: 'Please check your connection and try again.', variant: 'destructive' });
     } finally {
       setIsSubmitting(false);
     }
   };
-
-  const hallTicketDepts = clearanceWorkflow.getHallTicketDepartments();
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -210,7 +234,7 @@ export default function SubmitRequest() {
                         <RadioGroupItem value="no_dues" id="no_dues" className="mt-1" />
                         <Label htmlFor="no_dues" className="cursor-pointer w-full">
                           <div className="font-semibold text-primary">No Dues Certificate (Full Clearance)</div>
-                          <p className="text-xs text-muted-foreground mt-1">Requires approval from Subject Teachers, HOD, Accounts, Scholarship, and Exam Cell.</p>
+                          <p className="text-xs text-muted-foreground mt-1">Requires approval from Subject Teachers, Independent Departments, and Final Office Workflow.</p>
                         </Label>
                       </div>
 
@@ -249,10 +273,7 @@ export default function SubmitRequest() {
                             <span className="truncate max-w-[200px] flex items-center gap-2">
                                <FileText className="h-4 w-4" /> {file.name}
                             </span>
-                            <Button 
-                              type="button" variant="ghost" size="sm" 
-                              onClick={(e) => { e.stopPropagation(); setFiles([]); }}
-                            >
+                            <Button type="button" variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setFiles([]); }}>
                               <X className="h-4 w-4" />
                             </Button>
                           </div>
@@ -285,54 +306,46 @@ export default function SubmitRequest() {
                     </div>
                   ) : departmentTeachers.length > 0 ? (
                     <>
-                      {/* Subject Teachers */}
                       <div className="space-y-3">
-                        <p className="text-[10px] font-bold uppercase text-muted-foreground">1. Subject Clearances (Year {displayYear})</p>
-                        {departmentTeachers.map((teacher, index) => (
-                          <div key={teacher.id || index} className="flex items-start gap-2 text-xs">
+                        <p className="text-[10px] font-bold uppercase text-muted-foreground">1. Subject Clearances</p>
+                        {departmentTeachers.map((teacher) => (
+                          <div key={teacher.id} className="flex items-start gap-2 text-xs">
                             <CheckCircle2 className="h-3 w-3 text-primary mt-1 flex-shrink-0" />
                             <div>
-                              <p className="font-medium text-foreground">{teacher.subject || 'General Subject'}</p>
+                              <p className="font-medium text-foreground">{teacher.subject}</p>
                               <p className="text-muted-foreground text-[10px]">{teacher.name}</p>
                             </div>
                           </div>
                         ))}
                       </div>
 
-                      {/* Institutional Clearances */}
                       <div className="pt-3 border-t space-y-3 mt-3">
-                        <p className="text-[10px] font-bold uppercase text-muted-foreground">2. Institutional Clearances</p>
-                        {['HOD', 'Accounts', 'Scholarship', 'Exam Cell'].map((dept, index) => (
+                        <p className="text-[10px] font-bold uppercase text-muted-foreground">2. Independent Clearances</p>
+                        {clearanceWorkflow.getNoDuesIndependentDepartments().map((dept, index) => (
                           <div key={`inst-${index}`} className="flex items-start gap-2 text-xs">
                             <CheckCircle2 className="h-3 w-3 text-primary mt-1 flex-shrink-0" />
-                            <div>
-                              <p className="font-medium text-foreground">{dept}</p>
-                              <p className="text-muted-foreground text-[10px]">Department Approval</p>
+                            <p className="font-medium text-foreground">{clearanceWorkflow.getDepartmentLabel(dept)}</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="pt-3 border-t space-y-3 mt-3">
+                        <p className="text-[10px] font-bold uppercase text-muted-foreground">3. Final Office (Sequential)</p>
+                        {clearanceWorkflow.getNoDuesSequentialDepartments().map((dept, index) => (
+                          <div key={`seq-${index}`} className="flex items-start gap-2 text-xs">
+                            <div className="w-4 h-4 rounded-full bg-primary/20 text-primary flex items-center justify-center text-[8px] font-bold shrink-0 mt-0.5">
+                              {index + 1}
                             </div>
+                            <p className="font-medium text-foreground pt-0.5">{clearanceWorkflow.getDepartmentLabel(dept)}</p>
                           </div>
                         ))}
                       </div>
                     </>
                   ) : (
-                    <p className="text-xs text-destructive">No faculty found for your department and year. Clearance cannot be requested.</p>
+                    <p className="text-xs text-destructive">
+                      No faculty found for Department: "{student.department}" and Year: {displayYear}. Clearance cannot be requested.
+                    </p>
                   )}
-                </CardContent>
-              </Card>
-            )}
-
-            {clearanceType === 'hall_ticket' && (
-              <Card className="shadow-sm">
-                <CardHeader><CardTitle className="text-base">Hall Ticket Steps</CardTitle></CardHeader>
-                <CardContent className="space-y-3">
-                  {hallTicketDepts.map((dept, index) => (
-                    <div key={dept} className="flex items-start gap-3">
-                      <div className="flex flex-col items-center">
-                        <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold">{index + 1}</div>
-                        {index < hallTicketDepts.length - 1 && <div className="w-0.5 h-4 bg-border" />}
-                      </div>
-                      <p className="text-sm pt-0.5">{clearanceWorkflow.getDepartmentLabel(dept)}</p>
-                    </div>
-                  ))}
                 </CardContent>
               </Card>
             )}

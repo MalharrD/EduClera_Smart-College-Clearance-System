@@ -11,6 +11,11 @@ export type UserRole =
   | 'tpo' 
   | 'exam_cell';
 
+export interface TeachingAssignment {
+  year: number;
+  subject: string;
+}
+
 export interface User {
   id: string;
   supabaseId?: string;
@@ -20,9 +25,15 @@ export interface User {
   email: string;
   role: UserRole;
   department?: string;
+  
+  // Legacy fields (kept for backward compatibility with older data)
   year?: number;
   semester?: number;
   subject?: string;
+  
+  // New field to support multiple subjects across multiple years
+  teachingAssignments?: TeachingAssignment[];
+  
   createdAt: string;
 }
 

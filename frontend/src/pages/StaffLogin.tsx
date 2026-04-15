@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,7 @@ import { apiService } from '@/services/api';
 import { ArrowLeft, Loader2, UserPlus, LogIn, Eye, EyeOff } from 'lucide-react';
 
 export default function StaffLogin() {
+  const { role } = useParams<{ role: string }>();
   const [isRegistering, setIsRegistering] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -23,7 +24,7 @@ export default function StaffLogin() {
     password: '', 
     name: '', 
     email: '', 
-    role: 'teacher', 
+    role: role || 'teacher', 
     department: '', 
     year: '1', 
     subject: ''
@@ -32,6 +33,13 @@ export default function StaffLogin() {
   const { login, register } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+
+  // Update formData role if the URL parameter changes
+  useEffect(() => {
+    if (role) {
+      setFormData(prev => ({ ...prev, role }));
+    }
+  }, [role]);
 
   // Fetch departments from MongoDB on mount
   useEffect(() => {
@@ -54,8 +62,9 @@ export default function StaffLogin() {
       let loggedInUser;
 
       if (isRegistering) {
-        if (!formData.department || !formData.subject) {
-          throw new Error("Please select a department and enter a subject.");
+        // Only enforce department selection for HODs
+        if (formData.role === 'hod' && !formData.department) {
+          throw new Error("Please select a department for the HOD.");
         }
         await register(formData);
         toast({ title: "Account Created", description: "You have been registered successfully." });
@@ -65,14 +74,14 @@ export default function StaffLogin() {
         toast({ title: "Welcome Back", description: "Logged in successfully." });
       }
 
-      const role = loggedInUser?.role;
+      const userRole = loggedInUser?.role;
 
-      if (role === 'admin') {
+      if (userRole === 'admin') {
         navigate('/admin/dashboard');
-      } else if (role === 'hod') {
+      } else if (userRole === 'hod') {
         navigate('/hod/dashboard');
       } else if (
-        ['teacher', 'library', 'accounts', 'scholarship', 'student_section', 'hostel_bus', 'tpo', 'exam_cell'].includes(role || '')
+        ['teacher', 'library', 'accounts', 'scholarship', 'student_section', 'hostel_bus', 'tpo', 'exam_cell'].includes(userRole || '')
       ) {
         navigate('/department/dashboard');
       } else {
@@ -84,6 +93,23 @@ export default function StaffLogin() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Helper to get dynamic titles based on role
+  const getRoleDisplay = () => {
+    const roleMap: Record<string, string> = {
+      teacher: 'Teacher',
+      hod: 'HOD',
+      library: 'Librarian',
+      accounts: 'Accounts Officer',
+      scholarship: 'Scholarship In-charge',
+      student_section: 'Student Section',
+      hostel_bus: 'Hostel/Bus Coordinator',
+      tpo: 'TPO Officer',
+      exam_cell: 'Exam Cell Controller',
+      admin: 'Administrator'
+    };
+    return roleMap[role || 'teacher'] || 'Staff';
   };
 
   return (
@@ -109,9 +135,9 @@ export default function StaffLogin() {
 
           <Card>
             <CardHeader className="text-center">
-              <CardTitle>{isRegistering ? "Teacher Registration" : "Teacher Login"}</CardTitle>
+              <CardTitle>{isRegistering ? `${getRoleDisplay()} Registration` : `${getRoleDisplay()} Login`}</CardTitle>
               <CardDescription>
-                {isRegistering ? "Join your department faculty" : "Access your teacher dashboard"}
+                {isRegistering ? `Join the ${getRoleDisplay()} department` : `Access your ${getRoleDisplay()} dashboard`}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -141,40 +167,24 @@ export default function StaffLogin() {
                       </div>
                     </div>
                     
-                    {/* DYNAMIC DEPARTMENT DROPDOWN */}
-                    <div className="space-y-2">
-                      <Label>Department</Label>
-                      <Select value={formData.department} onValueChange={v => setFormData({...formData, department: v})} disabled={isLoading}>
-                        <SelectTrigger><SelectValue placeholder="Select Department" /></SelectTrigger>
-                        <SelectContent>
-                          {availableDepartments.map(d => (
-                            <SelectItem key={d.id || d.name} value={d.name}>{d.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Year Assigned</Label>
-                      <Select value={formData.year} onValueChange={v => setFormData({...formData, year: v})} disabled={isLoading}>
-                        <SelectTrigger><SelectValue placeholder="Academic Year" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="1">1st Year</SelectItem>
-                          <SelectItem value="2">2nd Year</SelectItem>
-                          <SelectItem value="3">3rd Year</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Subject Name</Label>
-                      <Input placeholder="e.g. Data Structures" value={formData.subject} onChange={e => setFormData({...formData, subject: e.target.value})} required disabled={isLoading} />
-                    </div>
+                    {role === 'hod' && (
+                      <div className="space-y-2">
+                        <Label>Department</Label>
+                        <Select value={formData.department} onValueChange={v => setFormData({...formData, department: v})} disabled={isLoading}>
+                          <SelectTrigger><SelectValue placeholder="Select Department" /></SelectTrigger>
+                          <SelectContent>
+                            {availableDepartments.map(d => (
+                              <SelectItem key={d.id || d.name} value={d.name}>{d.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <Label>Username or Enrollment ID</Label>
+                      <Label>Username or Email</Label>
                       <Input placeholder="Enter username" value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} required disabled={isLoading} />
                     </div>
                     <div className="space-y-2">
@@ -193,14 +203,14 @@ export default function StaffLogin() {
                   {isLoading ? (
                     <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processing...</>
                   ) : isRegistering ? (
-                    <><UserPlus className="mr-2 h-4 w-4" /> Register Teacher</>
+                    <><UserPlus className="mr-2 h-4 w-4" /> Register {getRoleDisplay()}</>
                   ) : (
                     <><LogIn className="mr-2 h-4 w-4" /> Login</>
                   )}
                 </Button>
 
                 <Button type="button" variant="link" className="w-full" onClick={() => setIsRegistering(!isRegistering)} disabled={isLoading}>
-                  {isRegistering ? "Already have an account? Login" : "New Teacher? Register Here"}
+                  {isRegistering ? "Already have an account? Login" : `New ${getRoleDisplay()}? Register Here`}
                 </Button>
               </form>
             </CardContent>

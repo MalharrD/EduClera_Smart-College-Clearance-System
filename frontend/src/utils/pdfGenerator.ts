@@ -41,28 +41,31 @@ const formatDateTime = (dateString: string): string => {
   const date = new Date(dateString);
   return date.toLocaleDateString('en-IN', {
     day: '2-digit',
-    month: 'short',
-    year: 'numeric',
+    month: '2-digit',
+    year: '2-digit',
   });
 };
 
 const getDepartmentDisplayName = (role: string): string => {
-  if (role === 'accounts') return 'Account Section';
-  if (role === 'scholarship') return 'Scholarship Section';
-  if (role === 'exam_cell') return 'Exam Section';
-  if (role === 'hod') return 'Department / H.O.D';
+  if (role === 'accounts') return 'Account';
+  if (role === 'scholarship') return 'Scholarship';
+  if (role === 'exam_cell') return 'Exam Cell';
+  if (role === 'student_section') return 'Student section';
+  if (role === 'hostel_bus') return 'Hostel / Bus';
+  if (role === 'tpo') return 'Training & Placement';
+  if (role === 'library') return 'Library';
+  if (role === 'hod') return 'Head of Department (H.O.D.)';
   const label = clearanceWorkflow.getDepartmentLabel(role as any);
   return label ? label : role;
 };
 
-// --- CUSTOM NO DUES CERTIFICATE (PURE DATABASE-DRIVEN) ---
+// --- CUSTOM NO DUES CERTIFICATE (3-TABLE STRUCTURE) ---
 export const generateNoDuesCertificate = async ({ student, approvals }: CertificateData): Promise<void> => {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
-  const margin = 15;
+  const margin = 12; 
   let yPos = margin + 5;
 
-  // 0. Fetch Users dynamically to translate IDs to Names
   let allUsers: User[] = [];
   try {
     allUsers = await apiService.getAllUsers();
@@ -70,56 +73,51 @@ export const generateNoDuesCertificate = async ({ student, approvals }: Certific
     console.warn("Could not fetch users to map names.");
   }
 
-  // 1. Header Text (No Logo to prevent overlap)
-  doc.setFont('times', 'normal');
+  // 1. Header Text
+  doc.setFont('times', 'bold');
   doc.setFontSize(12);
-  doc.setTextColor(0, 0, 0);
   doc.text("DKTE SOCIETY'S YASHWANTRAO CHAVAN POLYTECHNIC, ICHALKARANJI", pageWidth / 2, yPos, { align: 'center' });
-  yPos += 6;
-  doc.text(`Department – ${student.department || 'N/A'}`, pageWidth / 2, yPos, { align: 'center' });
+  yPos += 5;
+  doc.setFontSize(11);
+  doc.text(`Department - ${student.department?.toUpperCase() || 'N/A'}`, pageWidth / 2, yPos, { align: 'center' });
   yPos += 8;
   
-  doc.setFont('times', 'bold');
-  doc.setFontSize(14);
+  doc.setFontSize(12);
   doc.text("(NOC FORM)- For Submission", pageWidth / 2, yPos, { align: 'center' });
-  doc.setLineWidth(0.4);
-  doc.line(pageWidth / 2 - 32, yPos + 1, pageWidth / 2 + 32, yPos + 1); // Underline Title
-  yPos += 12;
-
-  // 2. Student Info Details (Actual DB Data Only)
-  doc.setFont('times', 'normal');
-  doc.setFontSize(11);
-  const col1 = margin;
-  const col2 = pageWidth / 2 + 10;
-
-  doc.text(`Student Name:  ${student.name}`, col1, yPos);
-  doc.text(`Mobile No.:  ${student.phone || 'N/A'}`, col2, yPos);
-  yPos += 8;
-
-  doc.text(`Enrollment No:   ${student.enrollmentNumber}`, col1, yPos);
-  doc.text(`Year:  ${student.year} Year`, col2, yPos);
+  doc.setLineWidth(0.3);
+  doc.line(pageWidth / 2 - 30, yPos + 1, pageWidth / 2 + 30, yPos + 1); // Underline Title
   yPos += 10;
 
-  // 3. Office Section Table (Institutional Approvals)
-  const instDepts = ['hod', 'scholarship', 'accounts', 'exam_cell'];
-  const instApprovals = approvals.filter(a => instDepts.includes(a.department as string));
+  // 2. Student Info Details
+  doc.setFont('times', 'normal');
+  doc.setFontSize(11);
   
-  // Sort them to match typical order
-  instApprovals.sort((a, b) => instDepts.indexOf(a.department as string) - instDepts.indexOf(b.department as string));
+  doc.text(`Student Name : ${student.name}`, margin, yPos);
+  doc.text(`Mobile No.: ${student.phone || ''}`, pageWidth - margin - 45, yPos);
+  yPos += 6;
 
-  const officeData = instApprovals.map((app, index) => {
-    let approverName = app.approvedBy || app.assignedTo || '-';
+  doc.text(`Enrollment No : ${student.enrollmentNumber}`, margin, yPos);
+  doc.text(`Year : ${student.year || ''}`, pageWidth - margin - 45, yPos);
+  yPos += 8;
+
+  // --- TABLE 1: OFFICE SECTION ---
+  const officeDepts = ['student_section', 'scholarship', 'accounts'];
+  
+  const officeData = officeDepts.map((deptName, index) => {
+    const app = approvals.find(a => a.department === deptName);
+    
+    let approverName = app?.approvedBy || app?.assignedTo || '';
     if ((approverName.length === 24 || approverName.length === 36) && !approverName.includes(' ')) {
       const foundUser = allUsers.find(u => u.id === approverName || u.supabaseId === approverName);
       if (foundUser) approverName = foundUser.name;
     }
     
-    return [
-      index + 1,
-      getDepartmentDisplayName(app.department),
-      approverName,
-      app.status === 'approved' ? `APPROVED\n(${formatDateTime(app.approvedAt || '')})` : 'PENDING'
-    ];
+    let signDate = '';
+    if (app?.status === 'approved') {
+      signDate = `Approved\n${formatDateTime(app.approvedAt || '')}`;
+    }
+
+    return [index + 1, getDepartmentDisplayName(deptName), approverName, signDate];
   });
 
   autoTable(doc, {
@@ -127,60 +125,114 @@ export const generateNoDuesCertificate = async ({ student, approvals }: Certific
     head: [['Sr.No.', 'Office Section', 'Name of Authority', 'Signature & Date']],
     body: officeData,
     theme: 'grid',
-    headStyles: { fillColor: [245, 245, 245], textColor: 0, fontStyle: 'bold', halign: 'center', lineWidth: 0.2, lineColor: 0 },
-    bodyStyles: { textColor: 0, halign: 'center', valign: 'middle', lineWidth: 0.2, lineColor: 0, fontSize: 10 },
+    headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', halign: 'center', valign: 'middle', lineWidth: 0.3, lineColor: 0 },
+    bodyStyles: { textColor: 0, halign: 'center', valign: 'middle', lineWidth: 0.3, lineColor: 0, fontSize: 10, minCellHeight: 10 },
     columnStyles: {
-      0: { halign: 'center', cellWidth: 15 },
-      1: { halign: 'left', fontStyle: 'bold' },
+      0: { cellWidth: 15 },
+      1: { halign: 'left', cellWidth: 50 },
       2: { halign: 'left' },
-      3: { halign: 'center', fontStyle: 'bold' }
+      3: { fontStyle: 'bold', cellWidth: 35 }
     },
     margin: { left: margin, right: margin }
   });
 
-  yPos = (doc as any).lastAutoTable.finalY + 15;
+  yPos = (doc as any).lastAutoTable.finalY + 8;
 
-  // 4. Subject Clearance Form Table (Real Subjects from DB)
+  // --- TABLE 2: DEPARTMENT SECTION ---
+  const departmentDepts = ['library', 'hostel_bus', 'tpo', 'exam_cell', 'hod'];
+  
+  const deptData = departmentDepts.map((deptName, index) => {
+    const app = approvals.find(a => a.department === deptName);
+    
+    let approverName = app?.approvedBy || app?.assignedTo || '';
+    if ((approverName.length === 24 || approverName.length === 36) && !approverName.includes(' ')) {
+      const foundUser = allUsers.find(u => u.id === approverName || u.supabaseId === approverName);
+      if (foundUser) approverName = foundUser.name;
+    }
+    
+    let signDate = '';
+    if (app?.status === 'approved') {
+      signDate = `Approved\n${formatDateTime(app.approvedAt || '')}`;
+    }
+
+    return [index + 1, getDepartmentDisplayName(deptName), approverName, signDate];
+  });
+
+  autoTable(doc, {
+    startY: yPos,
+    head: [['Sr.No.', 'Department Section', 'Name of Authority', 'Signature & Date']],
+    body: deptData,
+    theme: 'grid',
+    headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', halign: 'center', valign: 'middle', lineWidth: 0.3, lineColor: 0 },
+    bodyStyles: { textColor: 0, halign: 'center', valign: 'middle', lineWidth: 0.3, lineColor: 0, fontSize: 10, minCellHeight: 10 },
+    columnStyles: {
+      0: { cellWidth: 15 },
+      1: { halign: 'left', cellWidth: 50 },
+      2: { halign: 'left' },
+      3: { fontStyle: 'bold', cellWidth: 35 }
+    },
+    margin: { left: margin, right: margin }
+  });
+
+  yPos = (doc as any).lastAutoTable.finalY + 12;
+
+  // --- TABLE 3: SUBJECT CLEARANCE FORM ---
   doc.setFont('times', 'bold');
   doc.setFontSize(12);
   doc.text("CLEARANCE FORM (SUBJECTS)", pageWidth / 2, yPos, { align: 'center' });
   doc.line(pageWidth / 2 - 35, yPos + 1, pageWidth / 2 + 35, yPos + 1);
-  yPos += 6;
+  yPos += 5;
 
-  const subjectApprovals = approvals.filter(a => !instDepts.includes(a.department as string));
+  // Filter out the institutional ones we just rendered in tables 1 and 2
+  const subjectApprovals = approvals.filter(a => 
+    !officeDepts.includes(a.department as string) && 
+    !departmentDepts.includes(a.department as string)
+  );
+  
   const subjData = subjectApprovals.map((app, index) => {
-    let approverName = app.approvedBy || app.assignedTo || '-';
+    let approverName = app.approvedBy || app.assignedTo || '';
     if ((approverName.length === 24 || approverName.length === 36) && !approverName.includes(' ')) {
       const foundUser = allUsers.find(u => u.id === approverName || u.supabaseId === approverName);
       if (foundUser) approverName = foundUser.name;
     }
 
-    return [
-      index + 1,
-      app.department, // Subject Name
-      approverName,
-      app.status === 'approved' ? `APPROVED\n${formatDateTime(app.approvedAt || '')}` : 'PENDING'
-    ];
+    let signDate = '';
+    if (app?.status === 'approved') {
+      signDate = `Approved\n${formatDateTime(app.approvedAt || '')}`;
+    }
+
+    return [index + 1, app.department, approverName, signDate];
   });
+
+  // Pad with empty rows if few subjects exist to maintain form structure
+  while (subjData.length < 5) {
+    subjData.push([subjData.length + 1, '', '', '']);
+  }
 
   autoTable(doc, {
     startY: yPos,
     head: [['Sr.No.', 'Subject Name', 'Name of Faculty', 'Faculty Sign & Date']],
     body: subjData,
     theme: 'grid',
-    headStyles: { fillColor: [245, 245, 245], textColor: 0, fontStyle: 'bold', halign: 'center', valign: 'middle', lineWidth: 0.2, lineColor: 0 },
-    bodyStyles: { textColor: 0, halign: 'center', valign: 'middle', lineWidth: 0.2, lineColor: 0, fontSize: 10 },
+    headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', halign: 'center', valign: 'middle', lineWidth: 0.3, lineColor: 0 },
+    bodyStyles: { textColor: 0, halign: 'center', valign: 'middle', lineWidth: 0.3, lineColor: 0, fontSize: 10, minCellHeight: 10 },
     columnStyles: {
       0: { cellWidth: 15 },
-      1: { halign: 'left' },
+      1: { halign: 'left', cellWidth: 60 },
       2: { halign: 'left' },
-      3: { fontStyle: 'bold' }
+      3: { fontStyle: 'bold', cellWidth: 35 }
     },
     margin: { left: margin, right: margin }
   });
 
-  // 5. Footer Signatures
-  yPos = (doc as any).lastAutoTable.finalY + 30;
+  // Footer Signatures
+  yPos = (doc as any).lastAutoTable.finalY + 25;
+  // Ensure we don't draw signatures off the page
+  if (yPos > doc.internal.pageSize.getHeight() - 20) {
+    doc.addPage();
+    yPos = 30;
+  }
+  
   doc.setFont('times', 'bold');
   doc.setFontSize(11);
   doc.text("Student Signature", margin + 10, yPos);

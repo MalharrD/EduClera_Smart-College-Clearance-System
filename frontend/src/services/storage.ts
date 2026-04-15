@@ -289,15 +289,16 @@ export const storageService = {
 };
 
 export const clearanceWorkflow = {
-  // --- STRICT SEQUENTIAL HALL TICKET WORKFLOW ---
   getHallTicketDepartments(): UserRole[] {
     return ['teacher', 'hod', 'exam_cell', 'accounts', 'scholarship'];
   },
 
+  // Independent steps can approve at any time
   getNoDuesIndependentDepartments(): UserRole[] {
-    return ['library', 'hostel_bus', 'tpo', 'exam_cell'];
+    return ['library', 'tpo', 'exam_cell', 'hostel_bus', 'hod'];
   },
 
+  // Dependent steps must approve strictly in this order
   getNoDuesSequentialDepartments(): UserRole[] {
     return ['student_section', 'scholarship', 'accounts'];
   },
@@ -312,7 +313,7 @@ export const clearanceWorkflow = {
   // --- SMART APPROVAL LOGIC ---
   canApprove(
     requestId: string,
-    department: UserRole | string, // Updated to accept dynamic strings (Subject Names)
+    department: UserRole | string, 
     type: ClearanceType,
     existingApprovals?: ClearanceApproval[] 
   ): { canApprove: boolean; reason?: string } {
@@ -320,23 +321,18 @@ export const clearanceWorkflow = {
     const approvals = existingApprovals || storageService.getApprovalsByRequestId(requestId);
 
     // ============================================
-    // HALL TICKET LOGIC (Strict Chronological Check)
+    // HALL TICKET LOGIC 
     // ============================================
     if (type === 'hall_ticket') {
       const departments = this.getHallTicketDepartments();
       const currentIndex = departments.indexOf(department as UserRole);
 
-      // If department is not in the list at all
       if (currentIndex === -1) {
         return { canApprove: false, reason: 'Your role is not part of the Hall Ticket workflow.' };
       }
 
-      // Step 1: Teacher (Always allowed to approve immediately)
-      if (currentIndex === 0) {
-        return { canApprove: true };
-      }
+      if (currentIndex === 0) return { canApprove: true };
 
-      // Steps 2-5: Must wait for the previous department to approve
       const previousDept = departments[currentIndex - 1];
       const previousApproval = approvals.find((a) => a.department === previousDept);
 
@@ -345,41 +341,41 @@ export const clearanceWorkflow = {
         return { canApprove: false, reason: `Waiting for ${humanReadableName} to approve first.` };
       }
 
-      // If previous step is approved, this step is unlocked
       return { canApprove: true };
     }
 
     // ============================================
-    // NO DUES LOGIC
+    // NO DUES LOGIC (Independent vs Sequential)
     // ============================================
     const sequentialDepts = this.getNoDuesSequentialDepartments();
 
-    // 1. If the department is in the strictly sequential list, check chronological order
+    // 1. If it's a Dependent/Sequential Department (Student Section -> Scholarship -> Account)
     if (sequentialDepts.includes(department as UserRole)) {
       const currentIndex = sequentialDepts.indexOf(department as UserRole);
 
-      if (currentIndex === 0) {
-        return { canApprove: true };
+      // Must wait for the previous sequential department
+      if (currentIndex > 0) {
+        const previousDept = sequentialDepts[currentIndex - 1];
+        const previousApproval = approvals.find((a) => a.department === previousDept);
+
+        if (!previousApproval || previousApproval.status !== 'approved') {
+          const humanReadableName = this.getDepartmentLabel(previousDept);
+          return { canApprove: false, reason: `Dependent Step: Waiting for ${humanReadableName} approval first.` };
+        }
       }
-
-      const previousDept = sequentialDepts[currentIndex - 1];
-      const previousApproval = approvals.find((a) => a.department === previousDept);
-
-      if (!previousApproval || previousApproval.status !== 'approved') {
-        const humanReadableName = this.getDepartmentLabel(previousDept);
-        return { canApprove: false, reason: `Waiting for ${humanReadableName} approval.` };
-      }
-
+      
+      // If it's Student Section (index 0), it doesn't wait for any other *sequential* steps, 
+      // and independent steps are independent, so it can approve.
       return { canApprove: true };
     }
 
-    // 2. If it is NOT sequential, it means it's an Independent Department, HOD, Exam Cell, or a Subject Teacher
-    // They are allowed to approve instantly without waiting.
+    // 2. If it's an Independent Department (Library, HOD, TPO, etc) or Subject Teacher
+    // They can approve instantly
     return { canApprove: true };
   },
 
   updateRequestStatus(requestId: string): void {
-    // Server handles this automatically in node.js backend now
+    // Server handles this automatically in node.js backend
   },
 
   getDepartmentLabel(role: UserRole | string): string {
@@ -388,14 +384,14 @@ export const clearanceWorkflow = {
       teacher: 'Class Teacher', 
       hod: 'Head of Department',
       library: 'Library',
-      accounts: 'Accounts Section',
-      scholarship: 'Scholarship Section',
-      student_section: 'Student Section',
-      hostel_bus: 'Hostel/Bus',
+      hostel_bus: 'Hostel / Bus',
       tpo: 'Training & Placement',
-      exam_cell: 'Exam Section',
+      exam_cell: 'Exam Cell',
+      student_section: 'Student Section',
+      scholarship: 'Scholarship',
+      accounts: 'Account',
       admin: 'Administrator',
     };
-    return labels[role] || role; // If it's a dynamic subject like "Data Structures", it returns the subject name directly
+    return labels[role] || role; 
   },
 };
